@@ -33,9 +33,9 @@ _SVRF_NODE_TYPES = (
 )
 
 # Minimum ratio of SVRF-characteristic AST nodes to total top-level
-# statements.  Real SVRF files score 60 %–100 %; non-SVRF files score
-# 0 %–2 %.  A 50 % threshold cleanly separates the two.
-_MIN_SVRF_NODE_RATIO = 0.5
+# statements.  Real SVRF files score 30 %–100 %; non-SVRF files score
+# 0 %–5 %.  A 20 % threshold cleanly separates the two.
+_MIN_SVRF_NODE_RATIO = 0.2
 
 
 class ValidationResult:

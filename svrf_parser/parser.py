@@ -851,8 +851,10 @@ class Parser:
         # Assignment: ident = expr
         if t.type == TT.IDENT and self._peek().type == TT.EQUALS:
             return self._parse_prop_assignment()
-        # Bare expression / skip
-        self._skip_to_eol()
+        # Bare expression / skip – stop before ] so we don't consume the
+        # closing bracket of the enclosing property block.
+        while not self._at_eol() and not self._at(TT.RBRACKET):
+            self._advance()
         self._consume_eol()
         return None
 
