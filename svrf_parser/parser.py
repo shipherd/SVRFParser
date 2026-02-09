@@ -20,6 +20,11 @@ _DIRECTIVE_HEADS = frozenset({
     'FLAG', 'UNIT', 'TEXT', 'PORT', 'VIRTUAL', 'SVRF', 'PRECISION',
     'RESOLUTION', 'LABEL', 'TITLE', 'NET', 'PATHCHK',
     'DRAWN', 'STAMP',
+    # Additional directive heads from the SVRF specification
+    'DFM', 'RET', 'SONR', 'TDDRC', 'PERC', 'LITHO',
+    'MDP', 'MDPMERGE', 'FRACTURE',
+    'HCELL', 'FILTER', 'EXCLUDE', 'FLATTEN',
+    'VARIABLE', 'ENVIRONMENT',
 })
 
 # Keywords that are layer boolean/spatial operators (used in Pratt parsing)
@@ -76,6 +81,8 @@ class Parser:
         self.tokens = tokens
         self.pos = 0
         self.length = len(tokens)
+        self.warnings = []
+        self._block_depth = 0
 
     # ------------------------------------------------------------------
     # Token stream helpers
@@ -166,6 +173,11 @@ class Parser:
             if stmt is not None:
                 stmts.append(stmt)
             if self.pos == saved:
+                t = self._cur()
+                self.warnings.append(
+                    f"L{t.line}:{t.col}: Parser stuck at {t.type.name} "
+                    f"({t.value!r}), force advancing"
+                )
                 self._advance()
         return stmts
 
@@ -236,6 +248,10 @@ class Parser:
             return self._parse_property_block()
 
         # Skip unknown tokens
+        t = self._cur()
+        self.warnings.append(
+            f"L{t.line}:{t.col}: Skipped unknown token {t.type.name} ({t.value!r})"
+        )
         self._advance()
         return None
 
@@ -283,7 +299,14 @@ class Parser:
         if upper in _DIRECTIVE_HEADS:
             return self._parse_directive()
 
-        # Inside rule check blocks: bare expression or operation
+        # Bare expression (DRC operations inside rule check blocks, or
+        # unrecognized top-level statements).  Only warn at the top level –
+        # inside { } blocks bare expressions are expected SVRF constructs.
+        if self._block_depth == 0:
+            self.warnings.append(
+                f"L{t.line}:{t.col}: Unrecognized SVRF statement, "
+                f"treating {name!r} as bare expression"
+            )
         return self._parse_bare_expression()
 
     # ------------------------------------------------------------------
@@ -580,6 +603,7 @@ class Parser:
 
     def _parse_block_body(self):
         """Parse statements inside { } until closing brace."""
+        self._block_depth += 1
         stmts = []
         while not self._at(TT.EOF) and not self._at(TT.RBRACE):
             self._skip_newlines()
@@ -594,6 +618,7 @@ class Parser:
         if self._at(TT.RBRACE):
             self._advance()
         self._consume_eol()
+        self._block_depth -= 1
         return stmts
 
     # ------------------------------------------------------------------
