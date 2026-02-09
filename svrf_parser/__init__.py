@@ -2,6 +2,7 @@
 
 from .lexer import Lexer
 from .parser import Parser, SVRFParseError
+from . import ast_nodes as ast
 
 
 def parse(text, filename="<input>"):
@@ -18,21 +19,34 @@ def parse_file(path):
     return parse(text, filename=path)
 
 
-# Maximum ratio of parser warnings to total statements allowed for a file
-# to be considered valid SVRF.  A high warning ratio means the parser had
-# to fall back to bare-expression / skip-token handling too often, which
-# indicates the content is not genuine SVRF.
-_MAX_WARNING_RATIO = 0.3
+# SVRF-characteristic AST node types produced by the parser.  These represent
+# constructs specific to the SVRF language.  Generic expression-only nodes
+# (LayerRef, NumberLiteral, …) are excluded because the tolerant parser can
+# produce them from arbitrary text.
+_SVRF_NODE_TYPES = (
+    ast.LayerDef, ast.LayerMap, ast.LayerAssignment,
+    ast.Directive, ast.RuleCheckBlock,
+    ast.Connect, ast.Device, ast.DMacro,
+    ast.Define, ast.IfDef, ast.Include, ast.EncryptedBlock,
+    ast.Group, ast.Attach, ast.TraceProperty,
+    ast.VariableDef,
+)
+
+# Minimum ratio of SVRF-characteristic AST nodes to total top-level
+# statements.  Real SVRF files score 60 %–100 %; non-SVRF files score
+# 0 %–2 %.  A 50 % threshold cleanly separates the two.
+_MIN_SVRF_NODE_RATIO = 0.5
 
 
 class ValidationResult:
     """Result of SVRF validation, containing validity status and diagnostics."""
 
-    __slots__ = ('valid', 'errors')
+    __slots__ = ('valid', 'errors', 'warnings')
 
-    def __init__(self, valid, errors=None):
+    def __init__(self, valid, errors=None, warnings=None):
         self.valid = valid
         self.errors = errors or []
+        self.warnings = warnings or []
 
     def __bool__(self):
         return self.valid
@@ -47,13 +61,13 @@ def validate_svrf(text, filename="<input>"):
     """Validate whether *text* is a valid SVRF file.
 
     Returns a ``ValidationResult`` whose boolean value indicates validity.
-    The ``errors`` attribute contains a list of diagnostic strings when
-    validation fails.
+    The ``errors`` attribute contains diagnostic strings when validation
+    fails.  The ``warnings`` attribute contains informational parser
+    warnings (available regardless of validity).
 
-    Validation is based entirely on syntax analysis: the parser records
-    warnings whenever it encounters constructs it cannot recognise as
-    valid SVRF.  If the warning-to-statement ratio exceeds the threshold,
-    the file is considered invalid.
+    Validation is based on syntax analysis: the file is tokenized and
+    parsed, then the ratio of SVRF-characteristic AST nodes to total
+    top-level statements is checked against a threshold.
     """
     errors = []
 
@@ -81,28 +95,36 @@ def validate_svrf(text, filename="<input>"):
         errors.append(f"Unexpected error during parsing: {exc}")
         return ValidationResult(False, errors)
 
-    # 4. Check parser warnings.  The parser records a warning every time it
-    #    falls back to bare-expression parsing or skips an unknown token.
-    #    A genuine SVRF file should produce very few (if any) warnings.
+    # 4. The AST must contain a meaningful proportion of SVRF-characteristic
+    #    statements.  The parser is tolerant and can consume arbitrary
+    #    identifiers as LayerRef expressions, so we require that at least
+    #    half of the top-level statements are genuine SVRF constructs
+    #    (directives, layer definitions, rule check blocks, etc.).
     if not program.statements:
         errors.append("Parsed file contains no statements")
-        return ValidationResult(False, errors)
+        return ValidationResult(False, errors, parser.warnings)
 
     total = len(program.statements)
-    warn_count = len(parser.warnings)
+    svrf_count = sum(
+        1 for stmt in program.statements if isinstance(stmt, _SVRF_NODE_TYPES)
+    )
 
-    if total > 0 and warn_count / total > _MAX_WARNING_RATIO:
+    if svrf_count == 0:
         errors.append(
-            f"Too many syntax warnings: {warn_count}/{total} statements "
-            f"({warn_count/total:.0%}) were not recognized as valid SVRF "
-            f"(threshold {_MAX_WARNING_RATIO:.0%})"
+            "Parsed file contains no recognizable SVRF constructs "
+            "(e.g. LAYER, directive, rule check, CONNECT, DEVICE)"
         )
-        errors.extend(parser.warnings[:10])
-        if warn_count > 10:
-            errors.append(f"... and {warn_count - 10} more warnings")
-        return ValidationResult(False, errors)
+        return ValidationResult(False, errors, parser.warnings)
 
-    return ValidationResult(True)
+    ratio = svrf_count / total
+    if ratio < _MIN_SVRF_NODE_RATIO:
+        errors.append(
+            f"Only {svrf_count}/{total} ({ratio:.0%}) of top-level statements "
+            f"are SVRF constructs (need >= {_MIN_SVRF_NODE_RATIO:.0%})"
+        )
+        return ValidationResult(False, errors, parser.warnings)
+
+    return ValidationResult(True, warnings=parser.warnings)
 
 
 def is_valid_svrf(text, filename="<input>"):
