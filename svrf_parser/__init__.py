@@ -2,7 +2,6 @@
 
 from .lexer import Lexer
 from .parser import Parser, SVRFParseError
-from .tokens import TokenType
 from . import ast_nodes as ast
 
 
@@ -20,8 +19,11 @@ def parse_file(path):
     return parse(text, filename=path)
 
 
-# SVRF-characteristic AST node types. A valid SVRF file should contain
-# at least one of these after successful parsing.
+# SVRF-characteristic AST node types.  These represent constructs that are
+# specific to the SVRF language (layer definitions, directives, rule check
+# blocks, etc.).  Generic expression-only nodes (LayerRef, NumberLiteral, …)
+# are intentionally excluded – they can appear in any text that the parser
+# happens to consume without error.
 _SVRF_NODE_TYPES = (
     ast.LayerDef, ast.LayerMap, ast.LayerAssignment,
     ast.Directive, ast.RuleCheckBlock,
@@ -31,20 +33,10 @@ _SVRF_NODE_TYPES = (
     ast.VariableDef,
 )
 
-# Well-known SVRF keywords that may appear as identifiers in the token stream.
-_SVRF_KEYWORDS = frozenset({
-    'LAYER', 'LAYOUT', 'SOURCE', 'DRC', 'LVS', 'ERC', 'PEX',
-    'MASK', 'FLAG', 'UNIT', 'TEXT', 'PORT', 'VIRTUAL', 'SVRF',
-    'PRECISION', 'RESOLUTION', 'LABEL', 'TITLE', 'NET', 'PATHCHK',
-    'CONNECT', 'SCONNECT', 'DEVICE', 'DMACRO',
-    'AND', 'OR', 'NOT', 'INSIDE', 'OUTSIDE', 'INTERACT',
-    'TOUCH', 'ENCLOSE', 'BY',
-    'GROUP', 'ATTACH', 'TRACE',
-    'DRAWN', 'STAMP',
-    'EXT', 'INT', 'AREA', 'DENSITY', 'SHRINK', 'EXPAND', 'SIZE',
-    'COPY', 'MERGE', 'HOLES', 'EXTENT', 'RECTANGLE', 'POLYGON',
-    'ANGLE', 'OFFGRID', 'WITH', 'EDGE', 'LENGTH', 'WIDTH',
-})
+# Minimum ratio of SVRF-characteristic AST nodes to total top-level
+# statements.  This prevents false positives on arbitrary files that the
+# tolerant parser can partially consume.
+_MIN_SVRF_NODE_RATIO = 0.5
 
 
 class ValidationResult:
@@ -79,7 +71,7 @@ def validate_svrf(text, filename="<input>"):
         errors.append("File is empty or contains only whitespace")
         return ValidationResult(False, errors)
 
-    # 2. Tokenization check – also look for SVRF keywords in the token stream.
+    # 2. Tokenization.
     try:
         lexer = Lexer(text, filename=filename)
         tokens = lexer.tokens()
@@ -87,21 +79,7 @@ def validate_svrf(text, filename="<input>"):
         errors.append(f"Lexer error: {exc}")
         return ValidationResult(False, errors)
 
-    has_svrf_keyword = any(
-        tok.type == TokenType.IDENT and tok.value.upper() in _SVRF_KEYWORDS
-        for tok in tokens
-    )
-    has_pp_directive = any(
-        tok.type.name.startswith('PP_') for tok in tokens
-    )
-
-    if not has_svrf_keyword and not has_pp_directive:
-        errors.append(
-            "No recognizable SVRF keywords or preprocessor directives found"
-        )
-        return ValidationResult(False, errors)
-
-    # 3. Parsing check.
+    # 3. Parsing – a valid SVRF file must parse without errors.
     try:
         parser = Parser(tokens)
         program = parser.parse()
@@ -112,18 +90,31 @@ def validate_svrf(text, filename="<input>"):
         errors.append(f"Unexpected error during parsing: {exc}")
         return ValidationResult(False, errors)
 
-    # 4. The AST must contain at least one SVRF-characteristic statement.
+    # 4. The AST must contain a meaningful proportion of SVRF-characteristic
+    #    statements.  The parser is tolerant and can consume arbitrary
+    #    identifiers as LayerRef expressions, so we require that at least
+    #    half of the top-level statements are genuine SVRF constructs.
     if not program.statements:
         errors.append("Parsed file contains no statements")
         return ValidationResult(False, errors)
 
-    has_svrf_node = any(
-        isinstance(stmt, _SVRF_NODE_TYPES) for stmt in program.statements
+    total = len(program.statements)
+    svrf_count = sum(
+        1 for stmt in program.statements if isinstance(stmt, _SVRF_NODE_TYPES)
     )
-    if not has_svrf_node:
+
+    if svrf_count == 0:
         errors.append(
             "Parsed file contains no recognizable SVRF constructs "
             "(e.g. LAYER, directive, rule check, CONNECT, DEVICE)"
+        )
+        return ValidationResult(False, errors)
+
+    ratio = svrf_count / total
+    if ratio < _MIN_SVRF_NODE_RATIO:
+        errors.append(
+            f"Only {svrf_count}/{total} ({ratio:.0%}) of top-level statements "
+            f"are SVRF constructs (need >= {_MIN_SVRF_NODE_RATIO:.0%})"
         )
         return ValidationResult(False, errors)
 
