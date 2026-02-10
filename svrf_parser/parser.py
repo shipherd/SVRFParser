@@ -98,6 +98,15 @@ class Parser:
             return self.tokens[p]
         return Token(TT.EOF, '', 0, 0)
 
+    def _peek_skip_newlines(self):
+        """Peek at the next non-NEWLINE token without advancing."""
+        p = self.pos + 1
+        while p < self.length and self.tokens[p].type == TT.NEWLINE:
+            p += 1
+        if p < self.length:
+            return self.tokens[p]
+        return Token(TT.EOF, '', 0, 0)
+
     def _advance(self):
         tok = self._cur()
         if self.pos < self.length:
@@ -271,9 +280,11 @@ class Parser:
         if nxt.type == TT.EQUALS:
             return self._parse_assignment()
 
-        # Rule check block: name { ... }
-        if nxt.type == TT.LBRACE:
-            return self._parse_rule_check_block()
+        # Rule check block: name { ... }  (the { may be on the next line)
+        # Exclude control-flow keywords (ELSE, IF) which also use { }.
+        if upper not in ('ELSE', 'IF'):
+            if nxt.type == TT.LBRACE or (nxt.type == TT.NEWLINE and self._peek_skip_newlines().type == TT.LBRACE):
+                return self._parse_rule_check_block()
 
         # Keyword-based dispatch
         if upper == 'LAYER':
@@ -766,7 +777,8 @@ class Parser:
     def _parse_rule_check_block(self):
         loc = self._loc()
         name = self._advance().value  # name
-        self._advance()  # {
+        self._skip_newlines()         # { may be on the next line
+        self._advance()               # {
         self._skip_newlines()
         desc = None
         if self._at(TT.AT):
