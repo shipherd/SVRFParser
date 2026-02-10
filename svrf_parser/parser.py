@@ -1006,6 +1006,8 @@ class Parser:
             return 10
         if t.type in (TT.STAR, TT.SLASH):
             return 20
+        if t.type == TT.CARET:
+            return 25
         if t.type == TT.AMPAMP:
             return 3
         if t.type == TT.PIPEPIPE:
@@ -1197,7 +1199,11 @@ class Parser:
             if upper in ('CMACRO', 'PROPERTY', 'IF', 'ELSE'):
                 return 0
         # Arithmetic operators as infix in layer expressions (e.g. AA*GT)
+        if t.type == TT.CARET:
+            return 45
         if t.type == TT.STAR:
+            return 40
+        if t.type == TT.SLASH:
             return 40
         if t.type == TT.MINUS:
             return 38
@@ -1217,11 +1223,19 @@ class Parser:
             constraints = self._parse_constraints()
             return ast.ConstrainedExpr(expr=left, constraints=constraints, **loc)
 
-        # Arithmetic infix: *, -, +
+        # Arithmetic infix: ^, *, /, -, +
+        if t.type == TT.CARET:
+            self._advance()
+            right = self._parse_layer_expr(45)
+            return ast.BinaryOp(op='^', left=left, right=right, **loc)
         if t.type == TT.STAR:
             self._advance()
             right = self._parse_layer_expr(40)
             return ast.BinaryOp(op='*', left=left, right=right, **loc)
+        if t.type == TT.SLASH:
+            self._advance()
+            right = self._parse_layer_expr(40)
+            return ast.BinaryOp(op='/', left=left, right=right, **loc)
         if t.type == TT.MINUS:
             self._advance()
             right = self._parse_layer_expr(38)
@@ -1308,7 +1322,7 @@ class Parser:
         # Collect operands (layer refs, bracket exprs)
         while not self._at_eol():
             t = self._cur()
-            if t.type in (TT.LT, TT.GT_OP, TT.LE, TT.GE, TT.EQEQ):
+            if t.type in (TT.LT, TT.GT_OP, TT.LE, TT.GE, TT.EQEQ, TT.BANGEQ):
                 break
             if t.type == TT.IDENT and t.value.upper() in _DRC_MODIFIERS:
                 break
@@ -1329,7 +1343,7 @@ class Parser:
             break
 
         # Constraints
-        if self._cur().type in (TT.LT, TT.GT_OP, TT.LE, TT.GE, TT.EQEQ):
+        if self._cur().type in (TT.LT, TT.GT_OP, TT.LE, TT.GE, TT.EQEQ, TT.BANGEQ):
             constraints = self._parse_constraints()
 
         # Modifiers (greedy until EOL)
@@ -1341,7 +1355,7 @@ class Parser:
                 modifiers.append(str(self._advance().value))
             elif t.type == TT.STRING:
                 modifiers.append(self._advance().value)
-            elif t.type in (TT.LT, TT.GT_OP, TT.LE, TT.GE, TT.EQEQ):
+            elif t.type in (TT.LT, TT.GT_OP, TT.LE, TT.GE, TT.EQEQ, TT.BANGEQ):
                 for c in self._parse_constraints():
                     modifiers.append(f"{c.op}{c.value}")
             elif t.type == TT.LBRACKET:
@@ -1369,16 +1383,10 @@ class Parser:
         modifiers = []
         if self._at_val('BY'):
             self._advance()
-            if self._at(TT.INTEGER) or self._at(TT.FLOAT):
-                modifiers.append(str(self._advance().value))
-            elif self._at(TT.MINUS):
-                self._advance()
-                if self._at(TT.INTEGER):
-                    modifiers.append(str(-self._advance().value))
-                elif self._at(TT.FLOAT):
-                    modifiers.append(str(-self._advance().value))
-            elif self._at(TT.IDENT):
-                modifiers.append(self._advance().value)
+            # Parse the BY value as an expression to handle arithmetic
+            # like SIZE BY 31.5/2 or SIZE BY (VIA0_W_1+VIA0_R_3_S2)*8+GRID
+            by_expr = self._parse_layer_expr(0)
+            modifiers.append(by_expr)
         # Optional modifiers
         while not self._at_eol() and self._at(TT.IDENT):
             upper = self._cur().value.upper()
@@ -1398,7 +1406,7 @@ class Parser:
         self._advance()  # AREA
         operand = self._parse_layer_expr(50)
         constraints = []
-        if self._cur().type in (TT.LT, TT.GT_OP, TT.LE, TT.GE, TT.EQEQ):
+        if self._cur().type in (TT.LT, TT.GT_OP, TT.LE, TT.GE, TT.EQEQ, TT.BANGEQ):
             constraints = self._parse_constraints()
         return ast.ConstrainedExpr(
             expr=ast.UnaryOp(op='AREA', operand=operand, **loc),
@@ -1412,7 +1420,7 @@ class Parser:
         self._advance()  # ANGLE
         operand = self._parse_layer_expr(50)
         constraints = []
-        if self._cur().type in (TT.LT, TT.GT_OP, TT.LE, TT.GE, TT.EQEQ):
+        if self._cur().type in (TT.LT, TT.GT_OP, TT.LE, TT.GE, TT.EQEQ, TT.BANGEQ):
             constraints = self._parse_constraints()
         return ast.ConstrainedExpr(
             expr=ast.UnaryOp(op='ANGLE', operand=operand, **loc),
@@ -1426,7 +1434,7 @@ class Parser:
         self._advance()  # LENGTH
         operand = self._parse_layer_expr(50)
         constraints = []
-        if self._cur().type in (TT.LT, TT.GT_OP, TT.LE, TT.GE, TT.EQEQ):
+        if self._cur().type in (TT.LT, TT.GT_OP, TT.LE, TT.GE, TT.EQEQ, TT.BANGEQ):
             constraints = self._parse_constraints()
         return ast.ConstrainedExpr(
             expr=ast.UnaryOp(op='LENGTH', operand=operand, **loc),
@@ -1491,7 +1499,7 @@ class Parser:
         operand = self._parse_layer_expr(50)
         constraints = []
         modifiers = []
-        if self._cur().type in (TT.LT, TT.GT_OP, TT.LE, TT.GE, TT.EQEQ):
+        if self._cur().type in (TT.LT, TT.GT_OP, TT.LE, TT.GE, TT.EQEQ, TT.BANGEQ):
             constraints = self._parse_constraints()
         while not self._at_eol() and self._at(TT.IDENT):
             modifiers.append(self._advance().value)
@@ -1537,12 +1545,18 @@ class Parser:
         modifier = ''
         if self._at(TT.IDENT):
             modifier = self._advance().value
+        # After WITH EDGE/WIDTH/LENGTH, there may be a parenthesized expression
+        # (e.g. WITH EDGE (LENGTH (...) == 0) == 0.040) or direct constraints.
+        sub_expr = None
+        if self._at(TT.LPAREN):
+            sub_expr = self._parse_layer_expr(0)
         constraints = []
-        if self._cur().type in (TT.LT, TT.GT_OP, TT.LE, TT.GE, TT.EQEQ):
+        if self._cur().type in (TT.LT, TT.GT_OP, TT.LE, TT.GE, TT.EQEQ, TT.BANGEQ):
             constraints = self._parse_constraints()
+        right = sub_expr if sub_expr else ast.LayerRef(name=modifier, **loc)
         return ast.ConstrainedExpr(
             expr=ast.BinaryOp(op='WITH', left=left,
-                              right=ast.LayerRef(name=modifier, **loc), **loc),
+                              right=right, **loc),
             constraints=constraints, **loc)
 
     # ------------------------------------------------------------------
