@@ -278,12 +278,13 @@ class Constraint(AstNode):
 
 
 class ConstrainedExpr(Expression):
-    __slots__ = ('expr', 'constraints')
+    __slots__ = ('expr', 'constraints', 'modifiers')
 
-    def __init__(self, expr=None, constraints=None, **kw):
+    def __init__(self, expr=None, constraints=None, modifiers=None, **kw):
         super().__init__(**kw)
         self.expr = expr
         self.constraints = constraints or []
+        self.modifiers = modifiers or []
 
 
 class DRCOp(Expression):

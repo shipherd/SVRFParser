@@ -1,4 +1,4 @@
-# SVRFParser
+# SVRFParser (This lib is still under constructions, use this lib at your own risks)
 
 A pure-Python parser for SVRF (Standard Verification Rule Format) files used by Calibre DRC, LVS, and antenna rule decks. Built with hand-written recursive descent and Pratt parsing. No third-party dependencies.
 

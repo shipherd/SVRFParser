@@ -12,11 +12,29 @@ def parse(text, filename="<input>"):
     return parser.parse()
 
 
+def parse_with_diagnostics(text, filename="<input>"):
+    """Parse SVRF source text and return (Program, warnings).
+
+    Like ``parse()`` but also returns the list of parser warning strings.
+    """
+    lexer = Lexer(text, filename=filename)
+    parser = Parser(lexer.tokens())
+    tree = parser.parse()
+    return tree, parser.warnings
+
+
 def parse_file(path):
     """Parse an SVRF file and return an AST Program node."""
     with open(path, 'r', encoding='utf-8', errors='replace') as f:
         text = f.read()
     return parse(text, filename=path)
+
+
+def parse_file_with_diagnostics(path):
+    """Parse an SVRF file and return (Program, warnings)."""
+    with open(path, 'r', encoding='utf-8', errors='replace') as f:
+        text = f.read()
+    return parse_with_diagnostics(text, filename=path)
 
 
 # SVRF-characteristic AST node types produced by the parser.  These represent
