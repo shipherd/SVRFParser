@@ -7,25 +7,36 @@ import time
 # Add project root to path
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from svrf_parser import parse_file
+from svrf_parser import parse_file_with_diagnostics, parse_file
+from svrf_parser.ast_nodes import *
+
+SAMPLES_DIR = r"C:\Users\Boshe\Desktop\tmp\svrf_samples"
+
+# SVRF-characteristic AST node types
+_SVRF_NODE_TYPES = (
+    LayerDef, LayerMap, LayerAssignment,
+    Directive, RuleCheckBlock,
+    Connect, Device, DMacro,
+    Define, IfDef, Include, EncryptedBlock,
+    Group, Attach, TraceProperty,
+    VariableDef,
+)
 
 
 def find_sample_files(root):
-    """Walk samples/ directory and collect all files."""
-    samples_dir = os.path.join(root, 'samples')
-    if not os.path.isdir(samples_dir):
-        print(f"No samples/ directory found at {samples_dir}")
+    """Walk samples directory and collect all files."""
+    if not os.path.isdir(root):
+        print(f"No samples directory found at {root}")
         return []
     files = []
-    for dirpath, _, filenames in os.walk(samples_dir):
+    for dirpath, _, filenames in os.walk(root):
         for fn in sorted(filenames):
             files.append(os.path.join(dirpath, fn))
     return files
 
 
 def run_tests():
-    root = os.path.dirname(os.path.abspath(__file__))
-    files = find_sample_files(root)
+    files = find_sample_files(SAMPLES_DIR)
 
     if not files:
         print("No sample files found.")
@@ -37,27 +48,34 @@ def run_tests():
     results = []
 
     print(f"Found {total} sample files.\n")
-    print("-" * 70)
+    print("-" * 80)
 
     for path in files:
-        rel = os.path.relpath(path, root)
+        rel = os.path.relpath(path, SAMPLES_DIR)
         size = os.path.getsize(path)
         size_str = f"{size / 1024:.1f}KB" if size < 1024 * 1024 else \
                    f"{size / (1024 * 1024):.1f}MB"
 
         try:
             t0 = time.time()
-            tree = parse_file(path)
+            tree, warnings = parse_file_with_diagnostics(path)
             elapsed = time.time() - t0
             n_stmts = len(tree.statements) if tree else 0
+            n_warnings = len(warnings)
+
+            # Calculate SVRF node ratio
+            svrf_count = sum(
+                1 for s in tree.statements if isinstance(s, _SVRF_NODE_TYPES)
+            ) if tree else 0
+            ratio = svrf_count / n_stmts * 100 if n_stmts else 0
+
             print(f"  PASS  {rel} ({size_str}, {n_stmts} stmts, "
-                  f"{elapsed:.2f}s)")
+                  f"{n_warnings} warnings, {ratio:.0f}% SVRF, {elapsed:.2f}s)")
             passed += 1
             results.append(('PASS', rel, None))
         except Exception as e:
             elapsed = time.time() - t0 if 't0' in dir() else 0
             err_msg = str(e)
-            # Truncate long error messages
             if len(err_msg) > 120:
                 err_msg = err_msg[:120] + "..."
             print(f"  FAIL  {rel} ({size_str})")
@@ -65,7 +83,7 @@ def run_tests():
             failed += 1
             results.append(('FAIL', rel, err_msg))
 
-    print("-" * 70)
+    print("-" * 80)
     print(f"\nSummary: {passed}/{total} passed, {failed} failed\n")
 
     if failed:
@@ -76,6 +94,11 @@ def run_tests():
         return 1
     return 0
 
-
+def single_run(fn):
+    tree = parse_file(fn)
+    for stm in tree.statements:
+        if isinstance(stm, LayerAssignment):
+            print(f"{stm.name}")
 if __name__ == '__main__':
-    sys.exit(run_tests())
+    #sys.exit(run_tests())
+    sys.exit(single_run(r"C:\Users\Boshe\Desktop\tmp\svrf_samples\12nm\calibre.drc"))

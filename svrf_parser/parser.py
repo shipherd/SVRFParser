@@ -29,22 +29,26 @@ _DIRECTIVE_HEADS = frozenset({
 
 # Keywords that are layer boolean/spatial operators (used in Pratt parsing)
 _BINARY_OPS = frozenset({
-    'AND', 'OR', 'NOT', 'INSIDE', 'OUTSIDE', 'INTERACT', 'TOUCH',
-    'ENCLOSE', 'BY',
+    'AND', 'OR', 'NOT', 'XOR', 'INSIDE', 'OUTSIDE', 'OUT', 'INTERACT',
+    'TOUCH', 'ENCLOSE', 'BY', 'CUT',
 })
 
 # Binding powers for layer binary operators
 _LAYER_BP = {
     'OR': 10,
+    'XOR': 10,
     'AND': 20,
     'NOT': 20,
     'INSIDE': 30,
     'OUTSIDE': 30,
+    'OUT': 30,
     'INTERACT': 30,
     'TOUCH': 30,
     'ENCLOSE': 30,
     'IN': 30,
     'COIN': 30,
+    'COINCIDENT': 30,
+    'CUT': 30,
     'BY': 35,
 }
 
@@ -55,7 +59,7 @@ _UNARY_OPS = frozenset({
 
 # DRC check operations (prefix-style in rule check blocks)
 _DRC_OPS = frozenset({
-    'INT', 'EXT', 'ENC', 'DENSITY',
+    'INT', 'EXT', 'ENC', 'ENCLOSE', 'DENSITY',
 })
 
 # Modifiers that can follow DRC operations
@@ -73,6 +77,31 @@ _DRC_MODIFIERS = frozenset({
     'LVSCAREFUL',
 })
 
+# Identifiers that can START a layer expression in _layer_nud()
+# (explicit branches before the fallback).
+_EXPR_STARTERS = frozenset({
+    'NOT', 'COPY', 'PUSH', 'MERGE',
+    'SIZE', 'SHIFT', 'GROW', 'SHRINK',
+    'HOLES', 'DONUT', 'EXTENT', 'STAMP',
+    'RECTANGLE', 'RECTANGLES', 'EXTENTS',
+    'AREA', 'VERTEX', 'ANGLE', 'LENGTH',
+    'CONVEX', 'EXPAND', 'DFM', 'RET',
+    'OR', 'WITH', 'DRAWN',
+    'INTERACT', 'ENCLOSE', 'CUT',
+}) | _DRC_OPS
+
+# SVRF keywords that should NOT be treated as layer names in expression
+# context, unless they appear in the prescan symbol table.
+_SVRF_KEYWORDS = (
+    _DIRECTIVE_HEADS | _DRC_MODIFIERS | _EXPR_STARTERS | {
+        'OF', 'BY', 'STEP', 'TRUNCATE', 'LAYER',
+        'CONNECT', 'SCONNECT', 'DEVICE', 'DMACRO',
+        'ATTACH', 'GROUP', 'TRACE', 'PROPERTY',
+        'IF', 'ELSE', 'ENDIF',
+        'CMACRO', 'UNDEROVER', 'OVERUNDER',
+    }
+)
+
 
 class Parser:
     """SVRF parser using recursive descent + Pratt parsing."""
@@ -83,6 +112,48 @@ class Parser:
         self.length = len(tokens)
         self.warnings = []
         self._block_depth = 0
+        self._known_layers = self._prescan()
+
+    # ------------------------------------------------------------------
+    # Prescan: collect known layer/variable names (Pass 1)
+    # ------------------------------------------------------------------
+    def _prescan(self):
+        """Lightweight scan of token stream to build symbol table.
+
+        Recognizes:
+          LAYER <name> <number>      → layer definition
+          <name> = ...               → layer assignment
+          VARIABLE <name> ...        → variable definition
+          #DEFINE <name> ...         → macro definition
+        """
+        known = set()
+        i = 0
+        toks = self.tokens
+        length = self.length
+        while i < length:
+            t = toks[i]
+            if t.type == TT.IDENT:
+                upper = t.value.upper()
+                # LAYER <name> <number>
+                if upper == 'LAYER' and i + 2 < length:
+                    nxt = toks[i + 1]
+                    nxt2 = toks[i + 2]
+                    if nxt.type == TT.IDENT and nxt2.type in (TT.INTEGER, TT.FLOAT):
+                        known.add(nxt.value.upper())
+                # <name> = ...  (layer assignment)
+                elif i + 1 < length and toks[i + 1].type == TT.EQUALS:
+                    known.add(upper)
+                # VARIABLE <name>
+                elif upper == 'VARIABLE' and i + 1 < length:
+                    nxt = toks[i + 1]
+                    if nxt.type == TT.IDENT:
+                        known.add(nxt.value.upper())
+            elif t.type == TT.PP_DEFINE and i + 1 < length:
+                nxt = toks[i + 1]
+                if nxt.type == TT.IDENT:
+                    known.add(nxt.value.upper())
+            i += 1
+        return known
 
     # ------------------------------------------------------------------
     # Token stream helpers
@@ -98,9 +169,9 @@ class Parser:
             return self.tokens[p]
         return Token(TT.EOF, '', 0, 0)
 
-    def _peek_skip_newlines(self):
+    def _peek_skip_newlines(self, offset=1):
         """Peek at the next non-NEWLINE token without advancing."""
-        p = self.pos + 1
+        p = self.pos + offset
         while p < self.length and self.tokens[p].type == TT.NEWLINE:
             p += 1
         if p < self.length:
@@ -248,6 +319,20 @@ class Parser:
         if tt == TT.IDENT:
             return self._dispatch_ident()
 
+        # Digit-prefixed names: INTEGER immediately followed by IDENT
+        # e.g. 125xmy4_S_3_DFM1 { ... } or 4t_para_gate { ... }
+        if tt == TT.INTEGER:
+            nxt = self._peek()
+            if nxt.type == TT.IDENT:
+                nxt2 = self._peek(2)
+                # digit-name { => rule check block
+                if nxt2 and (nxt2.type == TT.LBRACE or
+                    (nxt2.type == TT.NEWLINE and self._peek_skip_newlines(2).type == TT.LBRACE)):
+                    return self._parse_rule_check_block()
+                # digit-name = => assignment
+                if nxt2 and nxt2.type == TT.EQUALS:
+                    return self._parse_assignment()
+
         # @ description line (inside rule check blocks)
         if tt == TT.AT:
             return self._parse_at_description()
@@ -255,6 +340,11 @@ class Parser:
         # [ property block (inside DMACRO)
         if tt == TT.LBRACKET:
             return self._parse_property_block()
+
+        # Parenthesized expression inside block bodies:
+        # e.g. (NW INTERACT NWDMY) AND TrGATE
+        if tt == TT.LPAREN and self._block_depth > 0:
+            return self._parse_bare_expression()
 
         # Skip unknown tokens
         t = self._cur()
@@ -307,8 +397,27 @@ class Parser:
             return self._parse_directive()
 
         # Multi-word directives
+        # NET AREA RATIO / NET INTERACT are DRC ops inside rule check blocks,
+        # not directives — let them fall through to bare expression parsing.
         if upper in _DIRECTIVE_HEADS:
+            if upper == 'NET' and self._block_depth > 0:
+                nxt = self._peek()
+                if nxt.type == TT.IDENT and nxt.value.upper() in ('AREA', 'INTERACT'):
+                    return self._parse_bare_expression()
             return self._parse_directive()
+
+        # DVPARAMS is a directive-like statement inside rule check blocks
+        if upper == 'DVPARAMS':
+            return self._parse_directive()
+
+        # RDB is a directive-like statement (RDB "path" layer1 layer2)
+        if upper == 'RDB':
+            return self._parse_directive()
+
+        # IF / ELSE IF / ELSE blocks (can appear outside property blocks,
+        # e.g. when #IFDEF splits a [PROPERTY ...] header across branches)
+        if upper == 'IF':
+            return self._parse_if_expr()
 
         # Bare expression (DRC operations inside rule check blocks, or
         # unrecognized top-level statements).  Only warn at the top level –
@@ -433,10 +542,28 @@ class Parser:
                 if mt in ('DATATYPE', 'TEXTTYPE'):
                     map_type = mt
                     self._advance()
-            type_num = self._consume_int()
-            internal_num = self._consume_int()
-            self._skip_to_eol()
+            # Collect remaining tokens on the line; the type specification
+            # may include range operators (>=1 <=129) or equality (==250).
+            # The last integer on the line is always internal_num.
+            remaining = []
+            while not self._at_eol():
+                remaining.append(self._advance())
             self._consume_eol()
+            # Find last integer token for internal_num
+            internal_num = 0
+            type_num = 0
+            last_int_idx = -1
+            for idx in range(len(remaining) - 1, -1, -1):
+                if remaining[idx].type == TT.INTEGER:
+                    last_int_idx = idx
+                    break
+            if last_int_idx >= 0:
+                internal_num = remaining[last_int_idx].value
+                # First integer before last_int_idx is type_num (simple case)
+                for idx in range(last_int_idx):
+                    if remaining[idx].type == TT.INTEGER:
+                        type_num = remaining[idx].value
+                        break
             return ast.LayerMap(gds_num=gds_num, map_type=map_type,
                                 type_num=type_num, internal_num=internal_num,
                                 **loc)
@@ -481,6 +608,9 @@ class Parser:
         name = ''
         if self._at(TT.IDENT):
             name = self._advance().value
+        elif self._at(TT.INTEGER) and self._peek().type == TT.IDENT:
+            # Handle names starting with digits (e.g. 2xmn_DN_6_WINDOW)
+            name = str(self._advance().value) + self._advance().value
         expr = self._parse_line_expression()
         self._consume_eol()
         return ast.VariableDef(name=name, expr=expr, **loc)
@@ -594,8 +724,11 @@ class Parser:
         loc = self._loc()
         self._advance()  # DMACRO
         name = ''
+        # Handle digit-prefixed names: INTEGER + IDENT (e.g. 3T_MOS_PRO)
+        if self._at(TT.INTEGER) and self._peek().type == TT.IDENT:
+            name = str(self._advance().value)
         if self._at(TT.IDENT):
-            name = self._advance().value
+            name += self._advance().value
         params = []
         while not self._at_eol() and not self._at(TT.LBRACE):
             if self._at(TT.IDENT):
@@ -765,7 +898,11 @@ class Parser:
     # ------------------------------------------------------------------
     def _parse_assignment(self):
         loc = self._loc()
-        name = self._advance().value  # name
+        # Handle digit-prefixed names: INTEGER + IDENT
+        name = ''
+        if self._at(TT.INTEGER) and self._peek().type == TT.IDENT:
+            name = str(self._advance().value)
+        name += self._advance().value  # name
         self._advance()  # =
         expr = self._parse_layer_expr(0)
         self._consume_eol()
@@ -776,7 +913,11 @@ class Parser:
     # ------------------------------------------------------------------
     def _parse_rule_check_block(self):
         loc = self._loc()
-        name = self._advance().value  # name
+        # Handle digit-prefixed names: INTEGER + IDENT
+        name = ''
+        if self._at(TT.INTEGER) and self._peek().type == TT.IDENT:
+            name = str(self._advance().value)
+        name += self._advance().value  # IDENT name
         self._skip_newlines()         # { may be on the next line
         self._advance()               # {
         self._skip_newlines()
@@ -837,6 +978,25 @@ class Parser:
                 self._advance()
         if self._at(TT.RBRACKET):
             self._advance()
+        # Capture trailing tokens after ] on the same line
+        # (e.g. "] RDB report.rep M1 M2 BY LAYER")
+        if not self._at_eol():
+            trail_loc = self._loc()
+            keywords = []
+            args = []
+            while not self._at_eol():
+                t = self._cur()
+                if t.type == TT.IDENT:
+                    keywords.append(self._advance().value)
+                elif t.type in (TT.INTEGER, TT.FLOAT):
+                    args.append(self._advance().value)
+                elif t.type == TT.STRING:
+                    args.append(self._advance().value)
+                else:
+                    self._advance()
+            if keywords or args:
+                body.append(ast.Directive(
+                    keywords=keywords, arguments=args, **trail_loc))
         self._consume_eol()
         return ast.PropertyBlock(properties=properties, body=body, **loc)
 
@@ -906,9 +1066,10 @@ class Parser:
             if self._at(TT.RBRACE):
                 self._advance()
         self._consume_eol()
-        # ELSE IF / ELSE
+        # ELSE IF / ELSE  (ELSE may be on same line as } or next line)
         elseifs = []
         else_body = []
+        self._skip_newlines()
         while self._at_val('ELSE'):
             self._advance()  # ELSE
             if self._at_val('IF'):
@@ -933,6 +1094,7 @@ class Parser:
                     if self._at(TT.RBRACE):
                         self._advance()
                 self._consume_eol()
+                self._skip_newlines()
                 elseifs.append((ei_cond, ei_body))
             else:
                 self._skip_newlines()
@@ -1079,6 +1241,28 @@ class Parser:
             left = self._layer_led(left)
         return left
 
+    def _can_start_layer_expr(self):
+        """Check if current token can begin a layer expression.
+
+        Uses the prescan symbol table to distinguish layer names from
+        SVRF keywords that should terminate operand consumption.
+        """
+        t = self._cur()
+        if t.type in (TT.LPAREN, TT.LBRACKET, TT.INTEGER,
+                       TT.FLOAT, TT.STRING, TT.MINUS):
+            return True
+        if t.type != TT.IDENT:
+            return False
+        upper = t.value.upper()
+        if upper in self._known_layers:
+            return True
+        if upper in _EXPR_STARTERS:
+            return True
+        if upper in _SVRF_KEYWORDS:
+            return False
+        # Unknown identifier — assume layer name (conservative)
+        return True
+
     # ------------------------------------------------------------------
     # NUD (prefix / atom)
     # ------------------------------------------------------------------
@@ -1097,6 +1281,11 @@ class Parser:
             return self._parse_bracket_expr()
 
         if t.type == TT.INTEGER:
+            # Digit-prefixed layer name: 15V_GATE_CHECK (adjacent, no space)
+            nxt = self._peek()
+            if nxt.type == TT.IDENT and nxt.col == t.col + len(str(t.value)):
+                name = str(self._advance().value) + self._advance().value
+                return ast.LayerRef(name=name, **loc)
             return ast.NumberLiteral(value=self._advance().value, **loc)
         if t.type == TT.FLOAT:
             return ast.NumberLiteral(value=self._advance().value, **loc)
@@ -1118,12 +1307,20 @@ class Parser:
 
         upper = t.value.upper()
 
+        if upper == 'DFM':
+            return self._parse_dfm_op()
+        if upper == 'RET':
+            return self._parse_dfm_op()  # RET follows same pattern as DFM
         if upper in _DRC_OPS:
             return self._parse_drc_op()
         if upper == 'SIZE':
             return self._parse_size_op()
+        if upper == 'SHIFT':
+            return self._parse_size_op()  # same pattern: SHIFT layer BY dx dy
         if upper == 'AREA':
             return self._parse_area_op()
+        if upper == 'VERTEX':
+            return self._parse_unary_constrained_op()
         if upper == 'ANGLE':
             return self._parse_angle_op()
         if upper == 'LENGTH':
@@ -1134,8 +1331,28 @@ class Parser:
         if upper == 'EXPAND' and self._peek().type == TT.IDENT and \
                 self._peek().value.upper() == 'EDGE':
             return self._parse_expand_edge_op()
+        if upper == 'EXPAND' and self._peek().type == TT.IDENT and \
+                self._peek().value.upper() == 'TEXT':
+            self._advance()  # EXPAND
+            self._advance()  # TEXT
+            modifiers = []
+            while not self._at_eol():
+                if self._at(TT.IDENT):
+                    modifiers.append(self._advance().value)
+                elif self._at(TT.STRING):
+                    modifiers.append(self._advance().value)
+                elif self._at(TT.INTEGER) or self._at(TT.FLOAT):
+                    modifiers.append(str(self._advance().value))
+                else:
+                    break
+            return ast.DRCOp(op='EXPAND TEXT', operands=[],
+                             constraints=[], modifiers=modifiers, **loc)
         if upper == 'RECTANGLE':
             return self._parse_rectangle_op()
+        if upper == 'RECTANGLES':
+            return self._parse_rectangles_op()
+        if upper == 'EXTENTS':
+            return self._parse_rectangles_op()  # same pattern: EXTENTS operand...
         if upper == 'NOT':
             self._advance()
             operand = self._parse_layer_expr(50)
@@ -1144,10 +1361,28 @@ class Parser:
             self._advance()
             operand = self._parse_layer_expr(50)
             return ast.UnaryOp(op='COPY', operand=operand, **loc)
+        if upper == 'PUSH':
+            self._advance()
+            operand = self._parse_layer_expr(0)
+            return ast.UnaryOp(op='PUSH', operand=operand, **loc)
+        if upper == 'MERGE':
+            self._advance()
+            operand = self._parse_layer_expr(50)
+            return ast.UnaryOp(op='MERGE', operand=operand, **loc)
+        if upper in ('GROW', 'SHRINK'):
+            return self._parse_grow_shrink_op()
         if upper == 'HOLES':
             self._advance()
             operand = self._parse_layer_expr(50)
-            return ast.UnaryOp(op='HOLES', operand=operand, **loc)
+            modifiers = []
+            while not self._at_eol() and self._at(TT.IDENT):
+                mod_u = self._cur().value.upper()
+                if mod_u in _DRC_MODIFIERS:
+                    modifiers.append(self._advance().value)
+                else:
+                    break
+            return ast.DRCOp(op='HOLES', operands=[operand],
+                             constraints=[], modifiers=modifiers, **self._loc())
         if upper == 'DONUT':
             self._advance()
             operand = self._parse_layer_expr(50)
@@ -1156,6 +1391,256 @@ class Parser:
             return self._parse_extent_op()
         if upper == 'STAMP':
             return self._parse_stamp_op()
+
+        # OFFGRID: DRC op with operands and modifiers
+        if upper == 'OFFGRID':
+            return self._parse_offgrid_op()
+
+        # ROTATE operand BY angle
+        if upper == 'ROTATE':
+            self._advance()  # ROTATE
+            operand = self._parse_layer_expr(50)
+            modifiers = []
+            while not self._at_eol():
+                if self._at(TT.IDENT):
+                    modifiers.append(self._advance().value)
+                elif self._at(TT.INTEGER) or self._at(TT.FLOAT):
+                    modifiers.append(str(self._advance().value))
+                else:
+                    break
+            return ast.DRCOp(op='ROTATE', operands=[operand],
+                             constraints=[], modifiers=modifiers, **loc)
+
+        # DEVICE LAYER device_ref ANNOTATE layer (inside expressions)
+        if upper == 'DEVICE' and self._peek().type == TT.IDENT and \
+                self._peek().value.upper() == 'LAYER':
+            self._advance()  # DEVICE
+            self._advance()  # LAYER
+            modifiers = []
+            while not self._at_eol():
+                if self._at(TT.IDENT):
+                    modifiers.append(self._advance().value)
+                elif self._at(TT.LPAREN):
+                    self._advance()
+                    inner = []
+                    while not self._at(TT.RPAREN) and not self._at(TT.EOF):
+                        inner.append(str(self._advance().value))
+                    if self._at(TT.RPAREN):
+                        self._advance()
+                    modifiers[-1] = modifiers[-1] + '(' + ' '.join(inner) + ')' if modifiers else '(' + ' '.join(inner) + ')'
+                else:
+                    break
+            return ast.DRCOp(op='DEVICE LAYER', operands=[],
+                             constraints=[], modifiers=modifiers, **loc)
+
+        # Prefix OR / OR EDGE: OR [EDGE] layer1 layer2 layer3 ...
+        # Supports multiline continuation inside blocks:
+        #   name = OR
+        #            op1
+        #            op2
+        if upper == 'OR':
+            nxt = self._peek()
+            # Also trigger for multiline OR: OR at EOL inside a block
+            if nxt.type in (TT.IDENT, TT.LPAREN, TT.INTEGER, TT.FLOAT) or \
+                    (nxt.type == TT.NEWLINE and self._block_depth > 0):
+                self._advance()  # OR
+                # Check for OR EDGE variant
+                or_op = 'OR'
+                if self._at(TT.IDENT) and self._cur().value.upper() == 'EDGE':
+                    self._advance()  # EDGE
+                    or_op = 'OR EDGE'
+                operands = []
+                while True:
+                    while not self._at_eol() and not self._at(TT.RPAREN) and not self._at(TT.RBRACKET) and self._can_start_layer_expr():
+                        operands.append(self._parse_layer_expr(50))
+                    # Multiline continuation: peek past newlines for more operands
+                    if self._at_eol() and self._block_depth > 0:
+                        saved = self.pos
+                        self._consume_eol()
+                        self._skip_newlines()
+                        if self._can_start_layer_expr() and not self._at(TT.RBRACE):
+                            continue  # more operands on next line
+                        self.pos = saved
+                    break
+                if len(operands) == 0:
+                    return ast.LayerRef(name='OR', **loc)
+                if len(operands) == 1:
+                    return operands[0]
+                # Build left-associative chain
+                result = operands[0]
+                for op in operands[1:]:
+                    result = ast.BinaryOp(op=or_op, left=result, right=op, **loc)
+                return result
+
+        # Prefix XOR: XOR A B (same pattern as prefix OR)
+        if upper == 'XOR':
+            nxt = self._peek()
+            if nxt.type in (TT.IDENT, TT.LPAREN, TT.INTEGER, TT.FLOAT):
+                self._advance()  # XOR
+                operands = []
+                while not self._at_eol() and not self._at(TT.RPAREN) and not self._at(TT.RBRACKET) and self._can_start_layer_expr():
+                    operands.append(self._parse_layer_expr(50))
+                if len(operands) == 0:
+                    return ast.LayerRef(name='XOR', **loc)
+                if len(operands) == 1:
+                    return operands[0]
+                result = operands[0]
+                for op in operands[1:]:
+                    result = ast.BinaryOp(op='XOR', left=result, right=op, **loc)
+                return result
+
+        # Prefix AND: AND layer1 layer2 layer3 ...
+        if upper == 'AND':
+            nxt = self._peek()
+            if nxt.type in (TT.IDENT, TT.LPAREN, TT.INTEGER, TT.FLOAT):
+                self._advance()  # AND
+                operands = []
+                while not self._at_eol() and not self._at(TT.RPAREN) and not self._at(TT.RBRACKET) and self._can_start_layer_expr():
+                    operands.append(self._parse_layer_expr(50))
+                if len(operands) == 0:
+                    return ast.LayerRef(name='AND', **loc)
+                if len(operands) == 1:
+                    return operands[0]
+                result = operands[0]
+                for op in operands[1:]:
+                    result = ast.BinaryOp(op='AND', left=result, right=op, **loc)
+                return result
+
+        # GOOD: DRC passing-pattern specification inside rule check blocks
+        # Pattern: GOOD L1 L2 OPPOSITE L3 L4 OPPOSITE // values
+        if upper == 'GOOD':
+            self._advance()  # GOOD
+            modifiers = []
+            while not self._at_eol():
+                if self._at(TT.IDENT):
+                    modifiers.append(self._advance().value)
+                elif self._at(TT.INTEGER) or self._at(TT.FLOAT):
+                    modifiers.append(str(self._advance().value))
+                elif self._at(TT.LPAREN):
+                    modifiers.append(self._parse_layer_expr(0))
+                else:
+                    break
+            return ast.DRCOp(op='GOOD', operands=[],
+                             constraints=[], modifiers=modifiers, **loc)
+
+        # NET AREA RATIO / NET AREA: antenna check operations
+        if upper == 'NET':
+            nxt = self._peek()
+            if nxt.type == TT.IDENT and nxt.value.upper() == 'AREA':
+                self._advance()  # NET
+                self._advance()  # AREA
+                op_name = 'NET AREA'
+                if self._at(TT.IDENT) and self._cur().value.upper() == 'RATIO':
+                    self._advance()  # RATIO
+                    op_name = 'NET AREA RATIO'
+                operands = []
+                while self._at(TT.IDENT) and not self._at_eol():
+                    upper_cur = self._cur().value.upper()
+                    if upper_cur in ('ACCUMULATE', 'RDB', 'PRINT', 'BY'):
+                        break
+                    operands.append(self._parse_layer_expr(50))
+                constraints = []
+                if self._cur().type in (TT.LT, TT.GT_OP, TT.LE, TT.GE, TT.EQEQ, TT.BANGEQ):
+                    constraints = self._parse_constraints()
+                modifiers = []
+                self._parse_drc_modifiers(modifiers)
+                self._parse_drc_multiline_continuation(modifiers)
+                return ast.DRCOp(op=op_name, operands=operands,
+                                 constraints=constraints, modifiers=modifiers, **loc)
+            # NET layer "string" ... — generic NET operation
+            else:
+                self._advance()  # NET
+                operands = []
+                while not self._at_eol():
+                    if self._at(TT.IDENT):
+                        operands.append(self._parse_layer_expr(50))
+                    elif self._at(TT.STRING):
+                        operands.append(ast.StringLiteral(value=self._advance().value, **self._loc()))
+                    elif self._at(TT.INTEGER) or self._at(TT.FLOAT):
+                        operands.append(ast.NumberLiteral(value=self._advance().value, **self._loc()))
+                    elif self._at(TT.LPAREN):
+                        operands.append(self._parse_layer_expr(0))
+                    else:
+                        break
+                return ast.DRCOp(op='NET', operands=operands,
+                                 constraints=[], modifiers=[], **loc)
+
+        # Multi-word edge operators as prefix (e.g. after NOT):
+        # COIN [INSIDE|OUTSIDE] EDGE, IN [INSIDE|OUTSIDE] EDGE,
+        # TOUCH [INSIDE|OUTSIDE] EDGE, INSIDE EDGE, OUTSIDE EDGE
+        if upper in ('COIN', 'IN', 'COINCIDENT'):
+            nxt = self._peek()
+            if nxt.type == TT.IDENT:
+                nxt_u = nxt.value.upper()
+                if nxt_u == 'EDGE':
+                    self._advance()  # COIN/IN
+                    self._advance()  # EDGE
+                    operand = self._parse_layer_expr(50)
+                    return ast.UnaryOp(op=upper + ' EDGE', operand=operand, **loc)
+                if nxt_u in ('INSIDE', 'OUTSIDE'):
+                    nxt2 = self._peek(2)
+                    if nxt2 and nxt2.type == TT.IDENT and nxt2.value.upper() == 'EDGE':
+                        self._advance()  # COIN/IN
+                        middle = self._advance().value.upper()  # INSIDE/OUTSIDE
+                        self._advance()  # EDGE
+                        operand = self._parse_layer_expr(50)
+                        return ast.UnaryOp(op=upper + ' ' + middle + ' EDGE', operand=operand, **loc)
+        if upper == 'TOUCH':
+            nxt = self._peek()
+            if nxt.type == TT.IDENT:
+                nxt_u = nxt.value.upper()
+                if nxt_u == 'EDGE':
+                    self._advance()  # TOUCH
+                    self._advance()  # EDGE
+                    operand = self._parse_layer_expr(50)
+                    return ast.UnaryOp(op='TOUCH EDGE', operand=operand, **loc)
+                if nxt_u in ('INSIDE', 'OUTSIDE'):
+                    nxt2 = self._peek(2)
+                    if nxt2 and nxt2.type == TT.IDENT and nxt2.value.upper() == 'EDGE':
+                        self._advance()  # TOUCH
+                        middle = self._advance().value.upper()  # INSIDE/OUTSIDE
+                        self._advance()  # EDGE
+                        operand = self._parse_layer_expr(50)
+                        return ast.UnaryOp(op='TOUCH ' + middle + ' EDGE', operand=operand, **loc)
+        if upper in ('INSIDE', 'OUTSIDE'):
+            nxt = self._peek()
+            if nxt.type == TT.IDENT and nxt.value.upper() == 'EDGE':
+                self._advance()  # INSIDE/OUTSIDE
+                self._advance()  # EDGE
+                operand = self._parse_layer_expr(50)
+                return ast.UnaryOp(op=upper + ' EDGE', operand=operand, **loc)
+            # INSIDE CELL / OUTSIDE CELL: DRC op with cell name + pattern args
+            if nxt.type == TT.IDENT and nxt.value.upper() == 'CELL':
+                self._advance()  # INSIDE/OUTSIDE
+                self._advance()  # CELL
+                operands = []
+                while not self._at_eol():
+                    if self._at(TT.IDENT):
+                        operands.append(self._parse_layer_expr(50))
+                    elif self._at(TT.STRING):
+                        operands.append(ast.StringLiteral(value=self._advance().value, **self._loc()))
+                    elif self._at(TT.LPAREN):
+                        operands.append(self._parse_layer_expr(0))
+                    else:
+                        break
+                return ast.DRCOp(op=upper + ' CELL', operands=operands,
+                                 constraints=[], modifiers=[], **loc)
+            # INSIDE/OUTSIDE as prefix unary op (e.g. NOT INSIDE B)
+            self._advance()
+            operand = self._parse_layer_expr(50)
+            return ast.UnaryOp(op=upper, operand=operand, **loc)
+
+        # INTERACT/ENCLOSE as prefix unary (e.g. NOT INTERACT OD2)
+        if upper in ('INTERACT', 'ENCLOSE', 'CUT'):
+            self._advance()
+            operand = self._parse_layer_expr(50)
+            return ast.UnaryOp(op=upper, operand=operand, **loc)
+
+        # WITH as prefix (e.g. NOT WITH EDGE layer, WITH WIDTH layer == val)
+        if upper == 'WITH':
+            # Parse as DRC op: WITH sub-op operand [constraints] [modifiers]
+            return self._parse_with_prefix_op()
+
         if upper == 'DRAWN':
             self._advance()
             keywords = ['DRAWN']
@@ -1163,8 +1648,15 @@ class Parser:
                 keywords.append(self._advance().value)
             return ast.Directive(keywords=keywords, arguments=[], **loc)
         if self._peek().type == TT.LPAREN:
-            return self._parse_func_call()
+            # Only treat as function call if ( is adjacent (no space),
+            # e.g. AREA(M1) but not SQR_VIA (RECTANGLE ...)
+            nxt = self._peek()
+            if nxt.col == t.col + len(t.value):
+                return self._parse_func_call()
 
+        # Fallback: treat as layer reference.
+        # (The _can_start_layer_expr() guard in greedy loops prevents
+        # keywords like OF/BY/LAYER from reaching here in those contexts.)
         self._advance()
         return ast.LayerRef(name=t.value, **loc)
 
@@ -1184,14 +1676,55 @@ class Parser:
             bp = _LAYER_BP.get(upper, 0)
             if bp:
                 # IN EDGE / COIN EDGE: only if followed by EDGE
-                if upper in ('IN', 'COIN'):
+                # Also handles COIN INSIDE EDGE, COIN OUTSIDE EDGE, etc.
+                if upper in ('IN', 'COIN', 'COINCIDENT'):
+                    nxt = self._peek()
+                    if nxt.type == TT.IDENT:
+                        nxt_u = nxt.value.upper()
+                        if nxt_u == 'EDGE':
+                            return bp
+                        if nxt_u in ('INSIDE', 'OUTSIDE'):
+                            nxt2 = self._peek(2)
+                            if nxt2 and nxt2.type == TT.IDENT and nxt2.value.upper() == 'EDGE':
+                                return bp
+                    return 0
+                # INSIDE EDGE / OUTSIDE EDGE as two-word binary ops
+                if upper in ('INSIDE', 'OUTSIDE'):
                     nxt = self._peek()
                     if nxt.type == TT.IDENT and nxt.value.upper() == 'EDGE':
                         return bp
-                    return 0
                 return bp
             if upper == 'WITH':
                 return 35
+            if upper == 'SIZE':
+                return 5
+            if upper in ('HOLES', 'DONUT'):
+                return 50
+            if upper == 'NET':
+                return 5  # NET INTERACT / NET AREA RATIO as infix
+            if upper in ('ANGLE', 'LENGTH', 'AREA'):
+                # Check if followed by constraint (e.g. layer ANGLE == 45)
+                nxt = self._peek()
+                if nxt.type in (TT.LT, TT.GT_OP, TT.LE, TT.GE, TT.EQEQ, TT.BANGEQ):
+                    return 5
+                return 0
+            # RECTANGLE as postfix DRC op (e.g. layer RECTANGLE == val BY == val)
+            # Also fires for modifier-only: layer RECTANGLE ORTHOGONAL ONLY
+            if upper == 'RECTANGLE':
+                nxt = self._peek()
+                if nxt.type in (TT.LT, TT.GT_OP, TT.LE, TT.GE, TT.EQEQ, TT.BANGEQ):
+                    return 5
+                if nxt.type == TT.IDENT and nxt.value.upper() in (
+                        'ORTHOGONAL', 'ONLY', 'ASPECT', 'BY',
+                        'SINGULAR', 'ALSO', 'CENTERS'):
+                    return 5
+                return 0
+            # EXPAND EDGE as postfix: (expr) EXPAND EDGE INSIDE BY val
+            if upper == 'EXPAND':
+                nxt = self._peek()
+                if nxt.type == TT.IDENT and nxt.value.upper() == 'EDGE':
+                    return 5
+                return 0
             # Stop words: don't treat as infix
             if upper in _DRC_MODIFIERS or upper in _DRC_OPS or \
                     upper in _DIRECTIVE_HEADS:
@@ -1218,10 +1751,21 @@ class Parser:
         t = self._cur()
         loc = self._loc()
 
-        # Comparison operators -> constraints
+        # Comparison operators -> constraints + optional trailing modifiers
         if t.type in (TT.LT, TT.GT_OP, TT.LE, TT.GE, TT.EQEQ, TT.BANGEQ):
             constraints = self._parse_constraints()
-            return ast.ConstrainedExpr(expr=left, constraints=constraints, **loc)
+            # Consume trailing DRC modifiers (EVEN, ODD, SINGULAR, ALSO, etc.)
+            modifiers = []
+            while not self._at_eol() and self._at(TT.IDENT):
+                mod_u = self._cur().value.upper()
+                if mod_u in _DRC_MODIFIERS or mod_u in ('EVEN', 'ODD',
+                        'PRIMARY', 'MULTI', 'NOT', 'MEASURE', 'ALL',
+                        'ANNOTATE', 'NODAL', 'GOOD'):
+                    modifiers.append(self._advance().value)
+                else:
+                    break
+            return ast.ConstrainedExpr(expr=left, constraints=constraints,
+                                       modifiers=modifiers, **loc)
 
         # Arithmetic infix: ^, *, /, -, +
         if t.type == TT.CARET:
@@ -1248,41 +1792,310 @@ class Parser:
         if t.type == TT.IDENT:
             upper = t.value.upper()
 
-            # IN EDGE / COIN EDGE (two-word binary ops)
-            if upper in ('IN', 'COIN'):
+            # IN EDGE / COIN EDGE / COIN INSIDE EDGE / COIN OUTSIDE EDGE
+            # COINCIDENT EDGE / COINCIDENT INSIDE EDGE / COINCIDENT OUTSIDE EDGE
+            if upper in ('IN', 'COIN', 'COINCIDENT'):
                 self._advance()  # IN or COIN
+                middle = ''
+                if self._at(TT.IDENT) and self._cur().value.upper() in ('INSIDE', 'OUTSIDE'):
+                    middle = ' ' + self._advance().value.upper()
                 self._advance()  # EDGE
-                op = upper + ' EDGE'
+                op = upper + middle + ' EDGE'
                 right = self._parse_layer_expr(30)
-                return ast.BinaryOp(op=op, left=left, right=right, **loc)
+                result = ast.BinaryOp(op=op, left=left, right=right, **loc)
+                return self._maybe_trailing_modifiers(result, loc)
 
             # WITH -> parse_with_op
             if upper == 'WITH':
                 return self._parse_with_op(left)
 
-            # TOUCH EDGE special case
+            # TOUCH / TOUCH EDGE / TOUCH INSIDE EDGE / TOUCH OUTSIDE EDGE
             if upper == 'TOUCH':
                 self._advance()
+                if self._at(TT.IDENT) and self._cur().value.upper() in ('INSIDE', 'OUTSIDE'):
+                    middle = self._cur().value.upper()
+                    nxt = self._peek()
+                    if nxt.type == TT.IDENT and nxt.value.upper() == 'EDGE':
+                        self._advance()  # INSIDE/OUTSIDE
+                        self._advance()  # EDGE
+                        right = self._parse_layer_expr(30)
+                        result = ast.BinaryOp(op='TOUCH ' + middle + ' EDGE',
+                                            left=left, right=right, **loc)
+                        return self._maybe_trailing_modifiers(result, loc)
                 if self._at_val('EDGE'):
                     self._advance()
                     right = self._parse_layer_expr(30)
-                    return ast.BinaryOp(op='TOUCH EDGE', left=left,
+                    result = ast.BinaryOp(op='TOUCH EDGE', left=left,
                                         right=right, **loc)
+                    return self._maybe_trailing_modifiers(result, loc)
                 right = self._parse_layer_expr(30)
-                return ast.BinaryOp(op='TOUCH', left=left,
+                result = ast.BinaryOp(op='TOUCH', left=left,
                                     right=right, **loc)
+                return self._maybe_trailing_modifiers(result, loc)
+
+            # HOLES / DONUT as postfix: layer HOLES -> HOLES layer
+            if upper in ('HOLES', 'DONUT'):
+                self._advance()
+                modifiers = []
+                while not self._at_eol() and self._at(TT.IDENT):
+                    mod_u = self._cur().value.upper()
+                    if mod_u in _DRC_MODIFIERS:
+                        modifiers.append(self._advance().value)
+                    else:
+                        break
+                return ast.DRCOp(op=upper, operands=[left],
+                                 constraints=[], modifiers=modifiers, **loc)
+
+            # ANGLE/LENGTH/AREA as infix measurement: layer ANGLE == 45
+            if upper in ('ANGLE', 'LENGTH', 'AREA'):
+                self._advance()  # ANGLE/LENGTH/AREA
+                constraints = []
+                if self._cur().type in (TT.LT, TT.GT_OP, TT.LE, TT.GE,
+                                        TT.EQEQ, TT.BANGEQ):
+                    constraints = self._parse_constraints()
+                modifiers = []
+                while not self._at_eol() and self._at(TT.IDENT):
+                    mod_u = self._cur().value.upper()
+                    if mod_u in _DRC_MODIFIERS or mod_u in (
+                            'SINGULAR', 'ALSO', 'EVEN', 'ODD',
+                            'PRIMARY', 'MULTI', 'NODAL', 'GOOD'):
+                        modifiers.append(self._advance().value)
+                    else:
+                        break
+                return ast.DRCOp(op=upper, operands=[left],
+                                 constraints=constraints, modifiers=modifiers, **loc)
+
+            # RECTANGLE as postfix: layer RECTANGLE == val BY == val
+            if upper == 'RECTANGLE':
+                self._advance()  # RECTANGLE
+                constraints = []
+                modifiers = []
+                if self._cur().type in (TT.LT, TT.GT_OP, TT.LE, TT.GE,
+                                        TT.EQEQ, TT.BANGEQ):
+                    constraints = self._parse_constraints()
+                # BY == value (second dimension constraint)
+                if self._at_val('BY'):
+                    self._advance()  # BY
+                    constraints.append(ast.Constraint(op='BY', value=None, **loc))
+                    if self._cur().type in (TT.LT, TT.GT_OP, TT.LE, TT.GE,
+                                            TT.EQEQ, TT.BANGEQ):
+                        constraints.extend(self._parse_constraints())
+                while not self._at_eol() and self._at(TT.IDENT):
+                    mod_u = self._cur().value.upper()
+                    if mod_u in _DRC_MODIFIERS or mod_u in ('ASPECT',):
+                        modifiers.append(self._advance().value)
+                        # ASPECT may be followed by a constraint: ASPECT == 1
+                        if mod_u == 'ASPECT' and not self._at_eol() and \
+                                self._cur().type in (TT.LT, TT.GT_OP, TT.LE,
+                                                     TT.GE, TT.EQEQ, TT.BANGEQ):
+                            constraints.extend(self._parse_constraints())
+                    else:
+                        break
+                return ast.DRCOp(op='RECTANGLE', operands=[left],
+                                 constraints=constraints, modifiers=modifiers, **loc)
+
+            # EXPAND EDGE as postfix: (expr) EXPAND EDGE INSIDE BY val
+            if upper == 'EXPAND':
+                self._advance()  # EXPAND
+                self._advance()  # EDGE
+                modifiers = []
+                while not self._at_eol():
+                    if self._at(TT.IDENT):
+                        upper_cur = self._cur().value.upper()
+                        if upper_cur in ('INSIDE', 'OUTSIDE'):
+                            modifiers.append(self._advance().value)
+                            if self._at_val('BY'):
+                                modifiers.append(self._advance().value)
+                                # bp=35 allows arithmetic but blocks OUTSIDE(30)
+                                if not self._at_eol():
+                                    modifiers.append(self._parse_layer_expr(35))
+                        else:
+                            modifiers.append(self._advance().value)
+                    elif self._at(TT.INTEGER) or self._at(TT.FLOAT):
+                        modifiers.append(str(self._advance().value))
+                    else:
+                        break
+                return ast.DRCOp(op='EXPAND EDGE', operands=[left],
+                                 constraints=[], modifiers=modifiers, **loc)
+
+            # NET as infix: layer NET INTERACT/AREA RATIO layer > value
+            if upper == 'NET':
+                self._advance()  # NET
+                # Build compound op name: NET INTERACT, NET AREA, NET AREA RATIO
+                op_name = 'NET'
+                while self._at(TT.IDENT) and not self._at_eol():
+                    nxt_u = self._cur().value.upper()
+                    if nxt_u in ('INTERACT', 'AREA', 'RATIO'):
+                        op_name += ' ' + self._advance().value.upper()
+                    else:
+                        break
+                operands = [left]
+                while self._at(TT.IDENT) and not self._at_eol():
+                    upper_cur = self._cur().value.upper()
+                    if upper_cur in ('ACCUMULATE', 'RDB', 'PRINT', 'BY'):
+                        break
+                    operands.append(self._parse_layer_expr(50))
+                constraints = []
+                if self._cur().type in (TT.LT, TT.GT_OP, TT.LE, TT.GE, TT.EQEQ, TT.BANGEQ):
+                    constraints = self._parse_constraints()
+                modifiers = []
+                self._parse_drc_modifiers(modifiers)
+                self._parse_drc_multiline_continuation(modifiers)
+                return ast.DRCOp(op=op_name, operands=operands,
+                                 constraints=constraints, modifiers=modifiers, **loc)
+
+            # SIZE as infix: (expr) SIZE BY value modifiers
+            if upper == 'SIZE':
+                # Reuse _parse_size_op but inject left as the operand
+                self._advance()  # SIZE
+                modifiers = []
+                if self._at_val('BY'):
+                    self._advance()
+                    by_expr = self._parse_layer_expr(35)
+                    modifiers.append(by_expr)
+                while not self._at_eol():
+                    if self._at(TT.IDENT):
+                        mod_u = self._cur().value.upper()
+                        if mod_u in ('UNDEROVER', 'OVERUNDER', 'INSIDE', 'OUTSIDE',
+                                     'GROW', 'SHRINK'):
+                            modifiers.append(self._advance().value)
+                        elif mod_u in ('OF', 'STEP', 'LAYER', 'TRUNCATE'):
+                            modifiers.append(self._advance().value)
+                            if not self._at_eol():
+                                modifiers.append(self._parse_layer_expr(50))
+                        else:
+                            break
+                    elif self._at(TT.INTEGER) or self._at(TT.FLOAT):
+                        modifiers.append(self._parse_layer_expr(50))
+                    elif self._at(TT.LPAREN):
+                        modifiers.append(self._parse_layer_expr(50))
+                    elif self._at(TT.STAR):
+                        self._advance()
+                        modifiers.append('*')
+                    else:
+                        break
+                return ast.DRCOp(op='SIZE', operands=[left],
+                                 constraints=[], modifiers=modifiers, **loc)
 
             # Standard binary ops (AND, OR, NOT, INSIDE, OUTSIDE, etc.)
             bp = _LAYER_BP.get(upper, 0)
             if bp:
                 self._advance()
+                # INSIDE EDGE / OUTSIDE EDGE / TOUCH EDGE as two-word binary ops
+                if upper in ('INSIDE', 'OUTSIDE', 'OUT', 'TOUCH') and self._at(TT.IDENT) and self._cur().value.upper() == 'EDGE':
+                    self._advance()  # EDGE
+                    right = self._parse_layer_expr(bp)
+                    result = ast.BinaryOp(op=upper + ' EDGE', left=left,
+                                        right=right, **loc)
+                    return self._maybe_trailing_modifiers(result, loc)
+                # INSIDE OF [LAYER] expr as compound binary op
+                if upper == 'INSIDE' and self._at(TT.IDENT) and self._cur().value.upper() == 'OF':
+                    self._advance()  # OF
+                    if self._at(TT.IDENT) and self._cur().value.upper() == 'LAYER':
+                        self._advance()  # LAYER
+                    right = self._parse_layer_expr(bp)
+                    return ast.BinaryOp(op='INSIDE OF', left=left,
+                                        right=right, **loc)
+                # OR EDGE as two-word binary op
+                if upper == 'OR' and self._at(TT.IDENT) and self._cur().value.upper() == 'EDGE':
+                    self._advance()  # EDGE
+                    right = self._parse_layer_expr(bp)
+                    result = ast.BinaryOp(op='OR EDGE', left=left,
+                                        right=right, **loc)
+                    return self._maybe_trailing_modifiers(result, loc)
+                # NOT TOUCH / NOT TOUCH EDGE as compound binary ops
+                if upper == 'NOT' and self._at(TT.IDENT) and self._cur().value.upper() == 'TOUCH':
+                    self._advance()  # TOUCH
+                    op_name = 'NOT TOUCH'
+                    if self._at(TT.IDENT) and self._cur().value.upper() == 'EDGE':
+                        self._advance()  # EDGE
+                        op_name = 'NOT TOUCH EDGE'
+                    right = self._parse_layer_expr(bp)
+                    result = ast.BinaryOp(op=op_name, left=left,
+                                        right=right, **loc)
+                    return self._maybe_trailing_modifiers(result, loc)
+                # NOT IN / NOT OUT / NOT OUTSIDE [EDGE] as compound binary ops
+                if upper == 'NOT' and self._at(TT.IDENT) and self._cur().value.upper() in ('IN', 'OUT', 'OUTSIDE'):
+                    not_rhs = self._advance().value.upper()  # IN/OUT/OUTSIDE
+                    op_name = 'NOT ' + not_rhs
+                    # NOT OUT EDGE / NOT OUTSIDE EDGE
+                    if not_rhs in ('OUT', 'OUTSIDE') and \
+                            self._at(TT.IDENT) and self._cur().value.upper() == 'EDGE':
+                        self._advance()  # EDGE
+                        op_name += ' EDGE'
+                    right = self._parse_layer_expr(bp)
+                    result = ast.BinaryOp(op=op_name, left=left,
+                                        right=right, **loc)
+                    return self._maybe_trailing_modifiers(result, loc)
+                # ENCLOSE RECTANGLE: compound DRC op
+                if upper == 'ENCLOSE' and self._at(TT.IDENT) and self._cur().value.upper() == 'RECTANGLE':
+                    self._advance()  # RECTANGLE
+                    operands = [left]
+                    while not self._at_eol():
+                        t = self._cur()
+                        if t.type in (TT.LT, TT.GT_OP, TT.LE, TT.GE, TT.EQEQ, TT.BANGEQ):
+                            break
+                        if t.type == TT.IDENT and t.value.upper() in _DRC_MODIFIERS:
+                            break
+                        if t.type == TT.IDENT and t.value.upper() in ('ASPECT', 'BY'):
+                            break
+                        if t.type in (TT.IDENT, TT.INTEGER, TT.FLOAT, TT.LPAREN, TT.LBRACKET):
+                            # bp=35 allows arithmetic (+/-) but blocks spatial ops
+                            operands.append(self._parse_layer_expr(35))
+                        else:
+                            break
+                    constraints = []
+                    if not self._at_eol() and self._cur().type in (TT.LT, TT.GT_OP, TT.LE, TT.GE, TT.EQEQ, TT.BANGEQ):
+                        constraints = self._parse_constraints()
+                    modifiers = []
+                    while not self._at_eol():
+                        t = self._cur()
+                        if t.type == TT.IDENT:
+                            modifiers.append(self._advance().value)
+                        elif t.type in (TT.INTEGER, TT.FLOAT):
+                            modifiers.append(str(self._advance().value))
+                        else:
+                            break
+                    return ast.DRCOp(op='ENCLOSE RECTANGLE', operands=operands,
+                                     constraints=constraints, modifiers=modifiers, **loc)
                 right = self._parse_layer_expr(bp)
-                return ast.BinaryOp(op=upper, left=left,
+                result = ast.BinaryOp(op=upper, left=left,
                                     right=right, **loc)
+                # Spatial ops can have trailing constraints + modifiers
+                if upper in ('INTERACT', 'INSIDE', 'OUTSIDE', 'OUT',
+                             'ENCLOSE', 'TOUCH', 'CUT'):
+                    return self._maybe_trailing_modifiers(result, loc)
+                return result
 
         # Shouldn't reach here, but advance to avoid infinite loop
         self._advance()
         return left
+
+    # ------------------------------------------------------------------
+    # Trailing modifiers after compound binary ops (ENDPOINT ONLY, etc.)
+    # ------------------------------------------------------------------
+    def _maybe_trailing_modifiers(self, result, loc):
+        """Consume optional trailing constraints + modifiers after a binary op."""
+        constraints = []
+        if self._cur().type in (TT.LT, TT.GT_OP, TT.LE, TT.GE,
+                                TT.EQEQ, TT.BANGEQ):
+            constraints = self._parse_constraints()
+        modifiers = []
+        while not self._at_eol() and self._at(TT.IDENT):
+            mod_u = self._cur().value.upper()
+            if mod_u in _DRC_MODIFIERS or mod_u in (
+                    'SINGULAR', 'ALSO', 'EVEN', 'ODD',
+                    'PRIMARY', 'MULTI', 'NODAL', 'GOOD',
+                    'CONNECTED', 'NOT', 'MEASURE', 'ALL',
+                    'ANNOTATE', 'ENDPOINT', 'ONLY'):
+                modifiers.append(self._advance().value)
+            else:
+                break
+        if constraints or modifiers:
+            return ast.ConstrainedExpr(expr=result,
+                                       constraints=constraints,
+                                       modifiers=modifiers, **loc)
+        return result
 
     # ------------------------------------------------------------------
     # Constraints: chain of < > <= >= == != with values
@@ -1306,47 +2119,22 @@ class Parser:
                     val = -self._advance().value
             elif self._at(TT.IDENT):
                 val = self._advance().value
+            elif self._at(TT.LPAREN):
+                # Parenthesized expression as constraint value
+                val = self._parse_layer_expr(0)
             constraints.append(ast.Constraint(op=op, value=val, **loc))
         return constraints
 
     # ------------------------------------------------------------------
-    # DRC operations: INT/EXT/ENC/DENSITY layer [layer] constraints mods
+    # DRC modifier consumption helper
     # ------------------------------------------------------------------
-    def _parse_drc_op(self):
-        loc = self._loc()
-        op = self._advance().value.upper()  # INT/EXT/ENC/DENSITY
-        operands = []
-        constraints = []
-        modifiers = []
+    # Known keywords that can start a DRC modifier continuation line
+    _MOD_CONTINUATION = frozenset({
+        'RDB', 'PRINT', 'POLYGON', 'ACCUMULATE', 'ALSO', 'ONLY',
+    })
 
-        # Collect operands (layer refs, bracket exprs)
-        while not self._at_eol():
-            t = self._cur()
-            if t.type in (TT.LT, TT.GT_OP, TT.LE, TT.GE, TT.EQEQ, TT.BANGEQ):
-                break
-            if t.type == TT.IDENT and t.value.upper() in _DRC_MODIFIERS:
-                break
-            if t.type == TT.LBRACKET:
-                operands.append(self._parse_bracket_expr())
-                continue
-            if t.type == TT.LPAREN:
-                self._advance()
-                expr = self._parse_layer_expr(0)
-                if self._at(TT.RPAREN):
-                    self._advance()
-                operands.append(expr)
-                continue
-            if t.type == TT.IDENT:
-                operands.append(ast.LayerRef(name=self._advance().value,
-                                             **self._loc()))
-                continue
-            break
-
-        # Constraints
-        if self._cur().type in (TT.LT, TT.GT_OP, TT.LE, TT.GE, TT.EQEQ, TT.BANGEQ):
-            constraints = self._parse_constraints()
-
-        # Modifiers (greedy until EOL)
+    def _parse_drc_modifiers(self, modifiers):
+        """Consume DRC modifiers (greedy until EOL) and append to list."""
         while not self._at_eol():
             t = self._cur()
             if t.type == TT.IDENT:
@@ -1370,6 +2158,233 @@ class Parser:
             else:
                 self._advance()
 
+    def _parse_drc_multiline_continuation(self, modifiers):
+        """Handle multi-line DRC op continuations (bracket blocks + modifier lines).
+
+        After the single-line modifier loop ends at EOL, this method peeks past
+        newlines for:
+          1. [ ... ] bracket expressions (possibly multi-line)
+          2. Lines starting with known modifier keywords (RDB, PRINT, etc.)
+        and continues consuming modifiers from those continuation lines.
+        """
+        if self._block_depth == 0:
+            return
+        while self._at_eol():
+            saved = self.pos
+            self._consume_eol()
+            self._skip_newlines()
+            if self._at(TT.LBRACKET):
+                # Multi-line bracket expression
+                bracket_str = self._consume_bracket_block()
+                modifiers.append(bracket_str)
+                self._parse_drc_modifiers(modifiers)
+            elif (self._at(TT.IDENT) and
+                  self._cur().value.upper() in self._MOD_CONTINUATION):
+                # Modifier continuation line (e.g. RDB ... BY LAYER)
+                self._parse_drc_modifiers(modifiers)
+            else:
+                self.pos = saved
+                break
+
+    # ------------------------------------------------------------------
+    # DRC operations: INT/EXT/ENC/DENSITY layer [layer] constraints mods
+    # ------------------------------------------------------------------
+    def _parse_drc_op(self):
+        loc = self._loc()
+        op = self._advance().value.upper()  # INT/EXT/ENC/DENSITY
+        # ENCLOSE RECTANGLE / ENC RECTANGLE: two-word DRC op
+        if op in ('ENC', 'ENCLOSE') and self._at(TT.IDENT) and \
+                self._cur().value.upper() == 'RECTANGLE':
+            op = op + ' RECTANGLE'
+            self._advance()
+        operands = []
+        constraints = []
+        modifiers = []
+
+        # Collect operands (layer refs, bracket exprs)
+        while not self._at_eol():
+            t = self._cur()
+            if t.type in (TT.LT, TT.GT_OP, TT.LE, TT.GE, TT.EQEQ, TT.BANGEQ):
+                break
+            if t.type == TT.IDENT and t.value.upper() in _DRC_MODIFIERS:
+                break
+            if t.type == TT.LBRACKET:
+                # Bracket exprs may contain special syntax (!,  -=, function calls)
+                # that the Pratt parser can't handle; consume as string
+                content = self._consume_bracket_block()
+                operands.append(ast.StringLiteral(value=content, **self._loc()))
+                continue
+            if t.type == TT.LPAREN:
+                self._advance()
+                expr = self._parse_layer_expr(0)
+                if self._at(TT.RPAREN):
+                    self._advance()
+                operands.append(expr)
+                continue
+            if t.type == TT.IDENT:
+                operands.append(ast.LayerRef(name=self._advance().value,
+                                             **self._loc()))
+                continue
+            break
+
+        # Constraints
+        if self._cur().type in (TT.LT, TT.GT_OP, TT.LE, TT.GE, TT.EQEQ, TT.BANGEQ):
+            constraints = self._parse_constraints()
+
+        # Modifiers (greedy until EOL)
+        self._parse_drc_modifiers(modifiers)
+        self._parse_drc_multiline_continuation(modifiers)
+
+        return ast.DRCOp(op=op, operands=operands,
+                         constraints=constraints, modifiers=modifiers, **loc)
+
+    # ------------------------------------------------------------------
+    # DFM operations: DFM PROPERTY/DV/SPACE/COPY/TEXT/DP ...
+    # ------------------------------------------------------------------
+    def _parse_dfm_op(self):
+        loc = self._loc()
+        self._advance()  # DFM
+        sub_op = ''
+        if self._at(TT.IDENT):
+            sub_op = self._advance().value.upper()
+        op = 'DFM ' + sub_op if sub_op else 'DFM'
+        # DFM DP has a sub-sub-op (CONFLICT, RING, WARNING, MASK0, MASK1)
+        if sub_op == 'DP' and self._at(TT.IDENT):
+            dp_sub = self._advance().value.upper()
+            op = 'DFM DP ' + dp_sub
+        # DFM PROPERTY NET is a sub-command for net-level properties
+        if sub_op == 'PROPERTY' and self._at(TT.IDENT) and self._cur().value.upper() == 'NET':
+            self._advance()  # NET
+            op = 'DFM PROPERTY NET'
+        operands = []
+        constraints = []
+        modifiers = []
+        # Collect operands (layer refs, bracket exprs, paren exprs)
+        while not self._at_eol():
+            t = self._cur()
+            if t.type in (TT.LT, TT.GT_OP, TT.LE, TT.GE, TT.EQEQ, TT.BANGEQ):
+                break
+            if t.type == TT.IDENT and t.value.upper() in _DRC_MODIFIERS:
+                break
+            if t.type == TT.IDENT and t.value.upper() == 'DVPARAMS':
+                break
+            if t.type == TT.IDENT and t.value.upper() in ('NOT', 'MEASURE',
+                    'ANNOTATE', 'NODAL', 'MULTI', 'PRIMARY',
+                    'OVERLAP', 'ABUT', 'ALSO', 'ACCUMULATE',
+                    'GOOD', 'EVEN', 'ODD', 'ALL',
+                    'PROPERTY', 'NUMBER', 'INVALID'):
+                break
+            if t.type == TT.LBRACKET:
+                # Bracket exprs may contain special syntax (-=, +=, function calls)
+                content = self._consume_bracket_block()
+                operands.append(ast.StringLiteral(value=content, **self._loc()))
+                continue
+            if t.type == TT.LPAREN:
+                # Check for parenthesized modifier like (OPPOSITE 0)
+                nxt = self._peek()
+                if nxt.type == TT.IDENT and nxt.value.upper() in (
+                        'OPPOSITE', 'PARALLEL', 'PERPENDICULAR'):
+                    self._advance()  # (
+                    while not self._at(TT.RPAREN) and not self._at_eol():
+                        if self._at(TT.IDENT):
+                            modifiers.append(self._advance().value)
+                        elif self._at(TT.INTEGER) or self._at(TT.FLOAT):
+                            modifiers.append(str(self._advance().value))
+                        else:
+                            self._advance()
+                    if self._at(TT.RPAREN):
+                        self._advance()
+                    continue
+                self._advance()
+                expr = self._parse_layer_expr(0)
+                if self._at(TT.RPAREN):
+                    self._advance()
+                operands.append(expr)
+                continue
+            if t.type == TT.IDENT:
+                operands.append(ast.LayerRef(name=self._advance().value,
+                                             **self._loc()))
+                continue
+            break
+
+        # DFM PROPERTY multiline continuation: operand lists can span lines
+        if sub_op == 'PROPERTY':
+            _dfm_mod_stop = frozenset({
+                'NOT', 'MEASURE', 'ANNOTATE', 'NODAL', 'MULTI', 'PRIMARY',
+                'OVERLAP', 'ABUT', 'ALSO', 'ACCUMULATE',
+                'GOOD', 'EVEN', 'ODD', 'ALL',
+                'PROPERTY', 'NUMBER', 'INVALID',
+            })
+            while self._at_eol():
+                saved = self.pos
+                self._consume_eol()
+                self._skip_newlines()
+                # Scan ahead: is this line purely IDENT tokens?
+                scan = self.pos
+                ident_count = 0
+                looks_like_operands = False
+                while scan < self.length:
+                    st = self.tokens[scan]
+                    if st.type in (TT.NEWLINE, TT.EOF):
+                        looks_like_operands = ident_count > 0
+                        break
+                    if st.type == TT.IDENT:
+                        u = st.value.upper()
+                        if u in _dfm_mod_stop or u in _DRC_MODIFIERS:
+                            looks_like_operands = ident_count > 0
+                            break
+                        ident_count += 1
+                    else:
+                        break  # non-IDENT token → not a continuation
+                    scan += 1
+                if not looks_like_operands:
+                    self.pos = saved
+                    break
+                # Consume operands from this continuation line
+                while not self._at_eol():
+                    t = self._cur()
+                    if t.type == TT.IDENT and t.value.upper() in _DRC_MODIFIERS:
+                        break
+                    if t.type == TT.IDENT and t.value.upper() in _dfm_mod_stop:
+                        break
+                    if t.type == TT.IDENT:
+                        operands.append(ast.LayerRef(
+                            name=self._advance().value, **self._loc()))
+                    else:
+                        break
+
+        # Constraints
+        if self._cur().type in (TT.LT, TT.GT_OP, TT.LE, TT.GE, TT.EQEQ, TT.BANGEQ):
+            constraints = self._parse_constraints()
+        # Modifiers (greedy until EOL)
+        while not self._at_eol():
+            t = self._cur()
+            if t.type == TT.IDENT:
+                modifiers.append(self._advance().value)
+            elif t.type in (TT.INTEGER, TT.FLOAT):
+                modifiers.append(str(self._advance().value))
+            elif t.type == TT.STRING:
+                modifiers.append(self._advance().value)
+            elif t.type in (TT.LT, TT.GT_OP, TT.LE, TT.GE, TT.EQEQ, TT.BANGEQ):
+                for c in self._parse_constraints():
+                    modifiers.append(f"{c.op}{c.value}")
+            elif t.type == TT.LBRACKET:
+                content = self._consume_bracket_block()
+                modifiers.append(ast.StringLiteral(value=content, **self._loc()))
+            elif t.type == TT.LPAREN:
+                self._advance()
+                expr = self._parse_layer_expr(0)
+                if self._at(TT.RPAREN):
+                    self._advance()
+                modifiers.append(expr)
+            elif t.type == TT.MINUS:
+                self._advance()
+                if self._at(TT.INTEGER):
+                    modifiers.append(str(-self._advance().value))
+                elif self._at(TT.FLOAT):
+                    modifiers.append(str(-self._advance().value))
+            else:
+                self._advance()
         return ast.DRCOp(op=op, operands=operands,
                          constraints=constraints, modifiers=modifiers, **loc)
 
@@ -1378,24 +2393,40 @@ class Parser:
     # ------------------------------------------------------------------
     def _parse_size_op(self):
         loc = self._loc()
-        self._advance()  # SIZE
+        op = self._advance().value.upper()  # SIZE or SHIFT
         operand = self._parse_layer_expr(50)
         modifiers = []
         if self._at_val('BY'):
             self._advance()
             # Parse the BY value as an expression to handle arithmetic
             # like SIZE BY 31.5/2 or SIZE BY (VIA0_W_1+VIA0_R_3_S2)*8+GRID
-            by_expr = self._parse_layer_expr(0)
+            by_expr = self._parse_layer_expr(35)
             modifiers.append(by_expr)
-        # Optional modifiers
-        while not self._at_eol() and self._at(TT.IDENT):
-            upper = self._cur().value.upper()
-            if upper in ('UNDEROVER', 'OVERUNDER', 'INSIDE', 'OUTSIDE',
-                         'TRUNCATE', 'GROW', 'SHRINK'):
-                modifiers.append(self._advance().value)
+        # Optional modifiers: INSIDE OF layer, STEP value, UNDEROVER, etc.
+        while not self._at_eol():
+            if self._at(TT.IDENT):
+                upper = self._cur().value.upper()
+                if upper in ('UNDEROVER', 'OVERUNDER', 'INSIDE', 'OUTSIDE',
+                             'GROW', 'SHRINK'):
+                    modifiers.append(self._advance().value)
+                elif upper in ('OF', 'STEP', 'LAYER', 'TRUNCATE'):
+                    modifiers.append(self._advance().value)
+                    # Consume the following value/layer as expression
+                    if not self._at_eol():
+                        modifiers.append(self._parse_layer_expr(50))
+                else:
+                    break
+            elif self._at(TT.INTEGER) or self._at(TT.FLOAT):
+                modifiers.append(self._parse_layer_expr(50))
+            elif self._at(TT.LPAREN):
+                modifiers.append(self._parse_layer_expr(50))
+            elif self._at(TT.STAR):
+                # e.g. STEP M13_S_1*0.7
+                self._advance()
+                modifiers.append('*')
             else:
                 break
-        return ast.DRCOp(op='SIZE', operands=[operand],
+        return ast.DRCOp(op=op, operands=[operand],
                          constraints=[], modifiers=modifiers, **loc)
 
     # ------------------------------------------------------------------
@@ -1410,6 +2441,18 @@ class Parser:
             constraints = self._parse_constraints()
         return ast.ConstrainedExpr(
             expr=ast.UnaryOp(op='AREA', operand=operand, **loc),
+            constraints=constraints, **loc)
+
+    def _parse_unary_constrained_op(self):
+        """Generic: OP operand [constraints] — e.g. VERTEX layer >= 8"""
+        loc = self._loc()
+        op = self._advance().value.upper()
+        operand = self._parse_layer_expr(50)
+        constraints = []
+        if self._cur().type in (TT.LT, TT.GT_OP, TT.LE, TT.GE, TT.EQEQ, TT.BANGEQ):
+            constraints = self._parse_constraints()
+        return ast.ConstrainedExpr(
+            expr=ast.UnaryOp(op=op, operand=operand, **loc),
             constraints=constraints, **loc)
 
     # ------------------------------------------------------------------
@@ -1462,6 +2505,8 @@ class Parser:
                         val = None
                         if self._at(TT.INTEGER) or self._at(TT.FLOAT):
                             val = self._advance().value
+                        elif self._at(TT.IDENT):
+                            val = self._advance().value
                         modifiers.append(f"{op_tok}{val}")
                     continue
                 else:
@@ -1480,9 +2525,20 @@ class Parser:
         self._advance()  # EDGE
         operand = self._parse_layer_expr(50)
         modifiers = []
+        # Pattern: [INSIDE|OUTSIDE BY expr]...
         while not self._at_eol():
             if self._at(TT.IDENT):
-                modifiers.append(self._advance().value)
+                upper_cur = self._cur().value.upper()
+                if upper_cur in ('INSIDE', 'OUTSIDE'):
+                    modifiers.append(self._advance().value)
+                    if self._at_val('BY'):
+                        modifiers.append(self._advance().value)
+                        # Parse value as expression (handles 0.051+VAR)
+                        # bp=35 allows arithmetic (+/-) but blocks OUTSIDE(30)
+                        if not self._at_eol():
+                            modifiers.append(self._parse_layer_expr(35))
+                else:
+                    modifiers.append(self._advance().value)
             elif self._at(TT.INTEGER) or self._at(TT.FLOAT):
                 modifiers.append(str(self._advance().value))
             else:
@@ -1491,20 +2547,178 @@ class Parser:
                          constraints=[], modifiers=modifiers, **loc)
 
     # ------------------------------------------------------------------
+    # OFFGRID layer (grid) (offset) [INSIDE OF LAYER ref] [modifiers]
+    # ------------------------------------------------------------------
+    def _parse_offgrid_op(self):
+        loc = self._loc()
+        self._advance()  # OFFGRID
+        operands = []
+        # Collect operands (layer refs and parenthesized expressions)
+        # Use bp=50 to prevent INSIDE/OUTSIDE from being consumed as binary ops
+        while not self._at_eol():
+            if self._at(TT.LPAREN):
+                operands.append(self._parse_layer_expr(50))
+            elif self._at(TT.IDENT):
+                upper_cur = self._cur().value.upper()
+                if upper_cur in ('INSIDE', 'OUTSIDE', 'ABSOLUTE',
+                                 'HINT', 'RDB', 'PRINT', 'ACCUMULATE'):
+                    break
+                operands.append(self._parse_layer_expr(50))
+            else:
+                break
+        modifiers = []
+        self._parse_drc_modifiers(modifiers)
+        return ast.DRCOp(op='OFFGRID', operands=operands,
+                         constraints=[], modifiers=modifiers, **loc)
+
+    # ------------------------------------------------------------------
     # RECTANGLE layer [constraints] [ORTHOGONAL ONLY]
     # ------------------------------------------------------------------
     def _parse_rectangle_op(self):
         loc = self._loc()
         self._advance()  # RECTANGLE
-        operand = self._parse_layer_expr(50)
+        # RECTANGLE ENCLOSURE: two-word DRC op like INT/EXT/ENC
+        if self._at(TT.IDENT) and self._cur().value.upper() == 'ENCLOSURE':
+            self._advance()  # ENCLOSURE
+            op = 'RECTANGLE ENCLOSURE'
+            operands = []
+            constraints = []
+            modifiers = []
+            # Collect operands
+            while not self._at_eol():
+                t = self._cur()
+                if t.type in (TT.LT, TT.GT_OP, TT.LE, TT.GE, TT.EQEQ, TT.BANGEQ):
+                    break
+                if t.type == TT.IDENT and t.value.upper() in _DRC_MODIFIERS:
+                    break
+                if t.type == TT.LBRACKET:
+                    operands.append(self._parse_bracket_expr())
+                    continue
+                if t.type == TT.LPAREN:
+                    self._advance()
+                    expr = self._parse_layer_expr(0)
+                    if self._at(TT.RPAREN):
+                        self._advance()
+                    operands.append(expr)
+                    continue
+                if t.type == TT.IDENT:
+                    operands.append(ast.LayerRef(name=self._advance().value,
+                                                 **self._loc()))
+                    continue
+                break
+            # Constraints
+            if self._cur().type in (TT.LT, TT.GT_OP, TT.LE, TT.GE, TT.EQEQ, TT.BANGEQ):
+                constraints = self._parse_constraints()
+            # Modifiers (greedy until EOL)
+            while not self._at_eol():
+                t = self._cur()
+                if t.type == TT.IDENT:
+                    modifiers.append(self._advance().value)
+                elif t.type in (TT.INTEGER, TT.FLOAT):
+                    modifiers.append(str(self._advance().value))
+                elif t.type == TT.STRING:
+                    modifiers.append(self._advance().value)
+                elif t.type in (TT.LT, TT.GT_OP, TT.LE, TT.GE, TT.EQEQ, TT.BANGEQ):
+                    for c in self._parse_constraints():
+                        modifiers.append(f"{c.op}{c.value}")
+                elif t.type == TT.LBRACKET:
+                    be = self._parse_bracket_expr()
+                    modifiers.append(be)
+                elif t.type == TT.MINUS:
+                    self._advance()
+                    if self._at(TT.INTEGER):
+                        modifiers.append(str(-self._advance().value))
+                    elif self._at(TT.FLOAT):
+                        modifiers.append(str(-self._advance().value))
+                else:
+                    self._advance()
+            # Multiline continuation: next line starts with a modifier keyword
+            _rect_enc_mods = frozenset({
+                'SINGULAR', 'GOOD', 'OPPOSITE', 'PARALLEL', 'PERPENDICULAR',
+                'REGION', 'ABUT', 'ALSO', 'ONLY', 'ENDPOINT', 'CENTERS',
+                'MEASURE', 'ANNOTATE', 'NODAL', 'MULTI', 'PRIMARY',
+                'EVEN', 'ODD', 'ALL', 'CONNECTED', 'ACCUMULATE',
+            })
+            while self._at_eol():
+                saved = self.pos
+                self._consume_eol()
+                self._skip_newlines()
+                if self._at(TT.IDENT) and self._cur().value.upper() in _rect_enc_mods:
+                    while not self._at_eol():
+                        t = self._cur()
+                        if t.type == TT.IDENT:
+                            modifiers.append(self._advance().value)
+                        elif t.type in (TT.INTEGER, TT.FLOAT):
+                            modifiers.append(str(self._advance().value))
+                        elif t.type in (TT.LT, TT.GT_OP, TT.LE, TT.GE, TT.EQEQ, TT.BANGEQ):
+                            for c in self._parse_constraints():
+                                modifiers.append(f"{c.op}{c.value}")
+                        elif t.type == TT.COMMENT:
+                            self._advance()
+                        else:
+                            self._advance()
+                else:
+                    self.pos = saved
+                    break
+            return ast.DRCOp(op=op, operands=operands,
+                             constraints=constraints, modifiers=modifiers, **loc)
+        operands = []
+        # Only parse operand if next token is NOT a constraint operator
+        # and NOT a modifier keyword (ORTHOGONAL, ONLY, etc.)
+        if not self._at_eol() and self._cur().type not in (
+                TT.LT, TT.GT_OP, TT.LE, TT.GE, TT.EQEQ, TT.BANGEQ):
+            if not (self._at(TT.IDENT) and self._cur().value.upper() in (
+                    _DRC_MODIFIERS | {'ASPECT'})):
+                operands.append(self._parse_layer_expr(50))
         constraints = []
         modifiers = []
         if self._cur().type in (TT.LT, TT.GT_OP, TT.LE, TT.GE, TT.EQEQ, TT.BANGEQ):
             constraints = self._parse_constraints()
+        # BY == value (second dimension constraint)
+        if self._at_val('BY'):
+            self._advance()  # BY
+            by_constraints = []
+            if self._cur().type in (TT.LT, TT.GT_OP, TT.LE, TT.GE, TT.EQEQ, TT.BANGEQ):
+                by_constraints = self._parse_constraints()
+            # Store BY constraints with a BY marker constraint
+            constraints.append(ast.Constraint(op='BY', value=None, **loc))
+            constraints.extend(by_constraints)
+        # Trailing modifiers: ORTHOGONAL, ONLY, ASPECT, etc.
         while not self._at_eol() and self._at(TT.IDENT):
-            modifiers.append(self._advance().value)
-        return ast.DRCOp(op='RECTANGLE', operands=[operand],
+            upper = self._cur().value.upper()
+            if upper in _DRC_MODIFIERS or upper == 'ASPECT':
+                modifiers.append(self._advance().value)
+                # ASPECT may be followed by a constraint: ASPECT > 1
+                if upper == 'ASPECT' and not self._at_eol() and \
+                        self._cur().type in (TT.LT, TT.GT_OP, TT.LE,
+                                             TT.GE, TT.EQEQ, TT.BANGEQ):
+                    constraints.extend(self._parse_constraints())
+            else:
+                break
+        return ast.DRCOp(op='RECTANGLE', operands=operands,
                          constraints=constraints, modifiers=modifiers, **loc)
+
+    # ------------------------------------------------------------------
+    # RECTANGLES w h dx dy INSIDE OF LAYER layer
+    # ------------------------------------------------------------------
+    def _parse_rectangles_op(self):
+        loc = self._loc()
+        op = self._advance().value.upper()  # RECTANGLES or EXTENTS
+        args = []
+        modifiers = []
+        while not self._at_eol() and self._can_start_layer_expr():
+            args.append(self._parse_layer_expr(50))
+        # Parse trailing modifier phrase: INSIDE OF [LAYER] <name>
+        #                                 OUTSIDE OF [LAYER] <name>
+        while not self._at_eol():
+            if self._at(TT.IDENT):
+                modifiers.append(self._advance().value)
+            elif self._at(TT.INTEGER) or self._at(TT.FLOAT):
+                modifiers.append(self._parse_layer_expr(50))
+            else:
+                break
+        return ast.DRCOp(op=op, operands=args,
+                         constraints=[], modifiers=modifiers, **loc)
 
     # ------------------------------------------------------------------
     # EXTENT [DRAWN] [ORIGINAL]
@@ -1519,7 +2733,32 @@ class Parser:
                 modifiers.append(self._advance().value)
             else:
                 break
-        return ast.DRCOp(op='EXTENT', operands=[],
+        # Consume remaining operands (layer names)
+        operands = []
+        while not self._at_eol() and self._can_start_layer_expr():
+            operands.append(self._parse_layer_expr(50))
+        return ast.DRCOp(op='EXTENT', operands=operands,
+                         constraints=[], modifiers=modifiers, **loc)
+
+    # ------------------------------------------------------------------
+    # GROW/SHRINK operand [TOP|BOTTOM|LEFT|RIGHT BY value]...
+    # ------------------------------------------------------------------
+    def _parse_grow_shrink_op(self):
+        loc = self._loc()
+        op = self._advance().value.upper()  # GROW or SHRINK
+        operand = self._parse_layer_expr(50)
+        modifiers = []
+        while not self._at_eol() and self._at(TT.IDENT):
+            upper = self._cur().value.upper()
+            if upper in ('TOP', 'BOTTOM', 'LEFT', 'RIGHT'):
+                modifiers.append(self._advance().value)
+                if self._at_val('BY'):
+                    modifiers.append(self._advance().value)
+                    if not self._at_eol():
+                        modifiers.append(self._parse_layer_expr(35))
+            else:
+                break
+        return ast.DRCOp(op=op, operands=[operand],
                          constraints=[], modifiers=modifiers, **loc)
 
     # ------------------------------------------------------------------
@@ -1544,20 +2783,149 @@ class Parser:
         self._advance()  # WITH
         modifier = ''
         if self._at(TT.IDENT):
-            modifier = self._advance().value
+            upper_mod = self._cur().value.upper()
+            if upper_mod in ('EDGE', 'WIDTH', 'LENGTH', 'AREA', 'TEXT', 'NEIGHBOR'):
+                modifier = self._advance().value.upper()
+        # WITH TEXT / WITH NEIGHBOR take multiple operands + modifiers -> use DRCOp
+        if modifier == 'TEXT':
+            operands = [left]
+            while not self._at_eol():
+                t = self._cur()
+                if t.type == TT.IDENT and t.value.upper() in _DRC_MODIFIERS:
+                    break
+                if t.type == TT.IDENT and t.value.upper() in ('PRIMARY', 'MULTI',
+                        'ACCUMULATE', 'NOT', 'MEASURE', 'ANNOTATE', 'NODAL'):
+                    break
+                if t.type in (TT.LT, TT.GT_OP, TT.LE, TT.GE, TT.EQEQ, TT.BANGEQ):
+                    break
+                if t.type == TT.IDENT:
+                    operands.append(ast.LayerRef(name=self._advance().value, **self._loc()))
+                elif t.type == TT.STRING:
+                    operands.append(ast.StringLiteral(value=self._advance().value, **self._loc()))
+                else:
+                    break
+            constraints = []
+            if self._cur().type in (TT.LT, TT.GT_OP, TT.LE, TT.GE, TT.EQEQ, TT.BANGEQ):
+                constraints = self._parse_constraints()
+            modifiers = []
+            while not self._at_eol() and self._at(TT.IDENT):
+                modifiers.append(self._advance().value)
+            return ast.DRCOp(op='WITH TEXT', operands=operands,
+                             constraints=constraints, modifiers=modifiers, **loc)
+        # WITH NEIGHBOR layer >= N SPACE <= val [INSIDE OF LAYER (...)]
+        if modifier == 'NEIGHBOR':
+            operands = [left]
+            while not self._at_eol():
+                t = self._cur()
+                if t.type in (TT.LT, TT.GT_OP, TT.LE, TT.GE, TT.EQEQ, TT.BANGEQ):
+                    break
+                if t.type == TT.IDENT and t.value.upper() in _DRC_MODIFIERS:
+                    break
+                if t.type == TT.IDENT and t.value.upper() in ('SPACE', 'NOTCH',
+                        'PRIMARY', 'MULTI', 'INSIDE', 'OUTSIDE'):
+                    break
+                if t.type in (TT.IDENT, TT.LPAREN):
+                    operands.append(self._parse_layer_expr(50))
+                elif t.type in (TT.INTEGER, TT.FLOAT):
+                    operands.append(ast.NumberLiteral(value=self._advance().value, **self._loc()))
+                else:
+                    break
+            constraints = []
+            if self._cur().type in (TT.LT, TT.GT_OP, TT.LE, TT.GE, TT.EQEQ, TT.BANGEQ):
+                constraints = self._parse_constraints()
+            mod_list = []
+            # Consume modifier+constraint pairs (e.g. SPACE <= 0.5 INSIDE OF LAYER (...))
+            while not self._at_eol():
+                if self._at(TT.IDENT):
+                    mod_u = self._cur().value.upper()
+                    if mod_u in ('SPACE', 'NOTCH', 'INSIDE', 'OUTSIDE',
+                                 'OF', 'LAYER') or mod_u in _DRC_MODIFIERS:
+                        mod_list.append(self._advance().value)
+                    else:
+                        break
+                elif self._cur().type in (TT.LT, TT.GT_OP, TT.LE, TT.GE, TT.EQEQ, TT.BANGEQ):
+                    mod_list.extend(self._parse_constraints())
+                elif self._at(TT.LPAREN):
+                    mod_list.append(self._parse_layer_expr(0))
+                elif self._at(TT.INTEGER) or self._at(TT.FLOAT):
+                    mod_list.append(ast.NumberLiteral(value=self._advance().value, **self._loc()))
+                else:
+                    break
+            return ast.DRCOp(op='WITH NEIGHBOR', operands=operands,
+                             constraints=constraints, modifiers=mod_list, **loc)
         # After WITH EDGE/WIDTH/LENGTH, there may be a parenthesized expression
-        # (e.g. WITH EDGE (LENGTH (...) == 0) == 0.040) or direct constraints.
+        # (e.g. WITH EDGE (LENGTH (...) == 0) == 0.040) or direct expression
+        # (e.g. WITH WIDTH SR_POLY == value) or direct constraints.
         sub_expr = None
         if self._at(TT.LPAREN):
             sub_expr = self._parse_layer_expr(0)
+        elif self._at(TT.IDENT) and not self._at_eol():
+            sub_expr = self._parse_layer_expr(50)
         constraints = []
         if self._cur().type in (TT.LT, TT.GT_OP, TT.LE, TT.GE, TT.EQEQ, TT.BANGEQ):
             constraints = self._parse_constraints()
-        right = sub_expr if sub_expr else ast.LayerRef(name=modifier, **loc)
+        op_name = 'WITH ' + modifier if modifier else 'WITH'
+        if sub_expr:
+            right = sub_expr
+        elif not modifier:
+            right = ast.LayerRef(name='', **loc)
+        else:
+            right = None
         return ast.ConstrainedExpr(
-            expr=ast.BinaryOp(op='WITH', left=left,
-                              right=right, **loc),
+            expr=ast.BinaryOp(op=op_name, left=left, right=right, **loc),
             constraints=constraints, **loc)
+
+    def _parse_with_prefix_op(self):
+        """Parse WITH in prefix/NUD position (e.g. NOT WITH EDGE layer)."""
+        loc = self._loc()
+        self._advance()  # WITH
+        modifier = ''
+        if self._at(TT.IDENT):
+            upper_mod = self._cur().value.upper()
+            if upper_mod in ('EDGE', 'WIDTH', 'LENGTH', 'AREA', 'TEXT', 'NEIGHBOR'):
+                modifier = self._advance().value.upper()
+        op_name = 'WITH ' + modifier if modifier else 'WITH'
+        operands = []
+        while not self._at_eol():
+            t = self._cur()
+            if t.type in (TT.LT, TT.GT_OP, TT.LE, TT.GE, TT.EQEQ, TT.BANGEQ):
+                break
+            if t.type == TT.IDENT and t.value.upper() in _DRC_MODIFIERS:
+                break
+            if t.type == TT.IDENT and t.value.upper() in ('PRIMARY', 'MULTI',
+                    'ACCUMULATE', 'NOT', 'MEASURE', 'ANNOTATE', 'NODAL'):
+                break
+            if t.type in (TT.IDENT, TT.STRING):
+                operands.append(self._parse_layer_expr(50))
+            elif t.type == TT.LPAREN:
+                operands.append(self._parse_layer_expr(0))
+            elif t.type in (TT.INTEGER, TT.FLOAT):
+                operands.append(ast.NumberLiteral(value=self._advance().value, **self._loc()))
+            else:
+                break
+        constraints = []
+        if self._cur().type in (TT.LT, TT.GT_OP, TT.LE, TT.GE, TT.EQEQ, TT.BANGEQ):
+            constraints = self._parse_constraints()
+        modifiers = []
+        # Consume modifier+constraint pairs in a loop (e.g. SPACE < value CENTERS)
+        while not self._at_eol():
+            if self._at(TT.IDENT):
+                mod_u = self._cur().value.upper()
+                if mod_u in _DRC_MODIFIERS or mod_u in ('SPACE', 'NOTCH',
+                        'EVEN', 'ODD', 'INSIDE', 'OUTSIDE', 'OF', 'LAYER'):
+                    modifiers.append(self._advance().value)
+                else:
+                    break
+            elif self._cur().type in (TT.LT, TT.GT_OP, TT.LE, TT.GE, TT.EQEQ, TT.BANGEQ):
+                modifiers.extend(self._parse_constraints())
+            elif self._at(TT.LPAREN):
+                modifiers.append(self._parse_layer_expr(0))
+            elif self._at(TT.INTEGER) or self._at(TT.FLOAT):
+                modifiers.append(ast.NumberLiteral(value=self._advance().value, **self._loc()))
+            else:
+                break
+        return ast.DRCOp(op=op_name, operands=operands,
+                         constraints=constraints, modifiers=modifiers, **loc)
 
     # ------------------------------------------------------------------
     # Bracket expression: [layer_expr]
@@ -1569,3 +2937,29 @@ class Parser:
         if self._at(TT.RBRACKET):
             self._advance()
         return expr
+
+    def _consume_bracket_block(self):
+        """Consume tokens from [ to matching ], handling nesting and newlines.
+
+        Returns a string of the bracket content (excluding delimiters).
+        Used for multi-line bracket expressions in DRC ops where the Pratt
+        parser cannot handle the complex arithmetic spanning multiple lines.
+        """
+        self._advance()  # [
+        depth = 1
+        parts = []
+        while depth > 0 and not self._at(TT.EOF):
+            t = self._cur()
+            if t.type == TT.LBRACKET:
+                depth += 1
+                parts.append('[')
+            elif t.type == TT.RBRACKET:
+                depth -= 1
+                if depth > 0:
+                    parts.append(']')
+            elif t.type == TT.NEWLINE:
+                parts.append(' ')
+            else:
+                parts.append(str(t.value))
+            self._advance()
+        return ' '.join(parts).strip()
