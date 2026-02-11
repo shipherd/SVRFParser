@@ -2653,8 +2653,6 @@ class Parser:
                         elif t.type in (TT.LT, TT.GT_OP, TT.LE, TT.GE, TT.EQEQ, TT.BANGEQ):
                             for c in self._parse_constraints():
                                 modifiers.append(f"{c.op}{c.value}")
-                        elif t.type == TT.COMMENT:
-                            self._advance()
                         else:
                             self._advance()
                 else:
