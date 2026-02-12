@@ -3,6 +3,7 @@
 from .lexer import Lexer
 from .parser import Parser, SVRFParseError
 from . import ast_nodes as ast
+from .visitor import AstVisitor
 
 
 def parse(text, filename="<input>"):

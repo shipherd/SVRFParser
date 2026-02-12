@@ -9,6 +9,12 @@ class AstNode:
         self.line = line
         self.col = col
 
+    def accept(self, visitor):
+        """Double-dispatch: calls visitor.visit_<NodeType>(self)."""
+        method_name = 'visit_' + type(self).__name__
+        method = getattr(visitor, method_name, visitor.generic_visit)
+        return method(self)
+
 
 class Program(AstNode):
     __slots__ = ('statements',)
@@ -297,6 +303,16 @@ class DRCOp(Expression):
         self.operands = operands or []
         self.constraints = constraints or []
         self.modifiers = modifiers or []
+
+
+class ErrorNode(AstNode):
+    """Represents an unrecognized or erroneous construct in the source."""
+    __slots__ = ('message', 'skipped_text')
+
+    def __init__(self, message='', skipped_text='', **kw):
+        super().__init__(**kw)
+        self.message = message
+        self.skipped_text = skipped_text
 
 
 class IfExpr(AstNode):
