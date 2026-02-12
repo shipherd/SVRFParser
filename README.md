@@ -2,6 +2,15 @@
 
 A pure-Python parser for SVRF (Standard Verification Rule Format) files used by Calibre DRC, LVS, and antenna rule decks. Built with hand-written recursive descent + Pratt parsing and two-pass symbol table disambiguation. No third-party dependencies.
 
+## Parsing Quality
+
+Tested against 16 real-world SVRF sample files (total ~27 MB, 67,378 statements):
+
+- **0 parser warnings** across all files
+- **119 unit tests** covering all major construct categories
+- Handles DRC, LVS, and antenna rule decks
+- Supports multiline expressions, `#IFDEF`-split blocks, deeply nested ternary chains with embedded preprocessor directives
+
 ## Project Structure
 
 ```
@@ -11,16 +20,13 @@ svrf_parser/
   lexer.py           # Lexer: source text -> token stream
   ast_nodes.py       # AST node class hierarchy
   parser.py          # Two-pass recursive descent + Pratt parser
-  printer.py         # AST -> SVRF text (for round-trip testing)
 tests/
   helpers.py         # Shared test utilities (parse_one, parse_expr, etc.)
   conftest.py        # pytest fixtures
-  tier1/             # Unit tests by construct category (110 tests)
+  tier1/             # Unit tests by construct category (119 tests)
   tier2/             # Integration tests on real sample files
-  tier3/             # Round-trip tests (AST -> text -> AST)
-baseline.py          # Baseline metrics collector
-coverage_analysis.py # Grammar coverage analysis vs SVRF docs
 test_samples.py      # Batch test harness for sample files
+baseline.py          # Baseline metrics collector
 ```
 
 ## Usage

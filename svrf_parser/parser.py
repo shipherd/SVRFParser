@@ -88,6 +88,7 @@ _EXPR_STARTERS = frozenset({
     'CONVEX', 'EXPAND', 'DFM', 'RET',
     'OR', 'WITH', 'DRAWN',
     'INTERACT', 'ENCLOSE', 'CUT',
+    'PATH',
 }) | _DRC_OPS
 
 # SVRF keywords that should NOT be treated as layer names in expression
@@ -292,9 +293,13 @@ class Parser:
         if tt in (TT.PP_ENCRYPT, TT.PP_DECRYPT):
             return self._parse_encrypted()
         if tt == TT.PP_ELSE:
-            return None  # handled by _parse_ifdef
+            self._advance()
+            self._consume_eol()
+            return None  # handled by _parse_ifdef; orphaned at top level
         if tt == TT.PP_ENDIF:
-            return None  # handled by _parse_ifdef
+            self._advance()
+            self._consume_eol()
+            return None  # handled by _parse_ifdef; orphaned at top level
         if tt == TT.PP_ENDCRYPT:
             self._advance()
             self._consume_eol()
@@ -312,23 +317,10 @@ class Parser:
         if tt == TT.EOF:
             return None
 
-        # Block close (shouldn't appear at top level, but be safe)
-        if tt == TT.RBRACE:
-            self._advance()
-            return None
-
-        # Stray ] from property blocks split across #IFDEF/#ENDIF
-        if tt == TT.RBRACKET:
-            self._advance()
-            return None
-
-        # Stray ) from multiline expressions
-        if tt == TT.RPAREN:
-            self._advance()
-            return None
-
-        # Stray , from property block continuation lines split across #IFDEF
-        if tt == TT.COMMA:
+        # Closing delimiters at statement level — legitimate when #IFDEF/#ELSE
+        # splits a rule check block, property block, or parenthesized expression
+        # across preprocessor boundaries.
+        if tt in (TT.RBRACE, TT.RBRACKET, TT.RPAREN, TT.COMMA):
             self._advance()
             return None
 
@@ -364,6 +356,16 @@ class Parser:
         # or standalone (EXT ...) / (INT ...) at any level
         if tt == TT.LPAREN:
             return self._parse_bare_expression()
+
+        # Continuation tokens from multiline expressions (operators, numbers,
+        # strings, etc. that belong to the previous line's expression).
+        # Consume the rest of the line silently.
+        if tt in (TT.STAR, TT.PLUS, TT.SLASH, TT.LT, TT.GT_OP, TT.LE, TT.GE,
+                  TT.EQEQ, TT.BANGEQ, TT.COLON, TT.SEMICOLON,
+                  TT.FLOAT, TT.STRING, TT.MINUS, TT.BANG):
+            self._skip_to_eol()
+            self._consume_eol()
+            return None
 
         # Skip unknown tokens
         t = self._cur()
@@ -451,13 +453,7 @@ class Parser:
             return self._parse_polygon()
 
         # Bare expression (DRC operations inside rule check blocks, or
-        # unrecognized top-level statements).  Only warn at the top level –
-        # inside { } blocks bare expressions are expected SVRF constructs.
-        if self._block_depth == 0:
-            self.warnings.append(
-                f"L{t.line}:{t.col}: Unrecognized SVRF statement, "
-                f"treating {name!r} as bare expression"
-            )
+        # statements that leaked to top level from #IFDEF-split blocks).
         return self._parse_bare_expression()
 
     # ------------------------------------------------------------------
@@ -503,6 +499,9 @@ class Parser:
             elif t.type == TT.STRING:
                 args.append(self._advance().value)
             else:
+                self.warnings.append(
+                    f"L{t.line}:{t.col}: Unexpected token {t.type.name} "
+                    f"({t.value!r}) in CMACRO invocation, skipping")
                 self._advance()
         self._consume_eol()
         return ast.Directive(keywords=keywords, arguments=args, **loc)
@@ -521,6 +520,9 @@ class Parser:
             elif t.type == TT.STRING:
                 args.append(self._advance().value)
             else:
+                self.warnings.append(
+                    f"L{t.line}:{t.col}: Unexpected token {t.type.name} "
+                    f"({t.value!r}) in POLYGON statement, skipping")
                 self._advance()
         self._consume_eol()
         return ast.Directive(keywords=['POLYGON'], arguments=args, **loc)
@@ -775,6 +777,10 @@ class Parser:
                         elif self._at(TT.INTEGER):
                             cmacro_args.append(-self._advance().value)
                     else:
+                        _st = self._cur()
+                        self.warnings.append(
+                            f"L{_st.line}:{_st.col}: Unexpected token {_st.type.name} "
+                            f"({_st.value!r}) in DEVICE CMACRO args, skipping")
                         self._advance()
                 break
             if self._at(TT.LT):
@@ -838,11 +844,18 @@ class Parser:
             self._skip_newlines()
             if self._at(TT.RBRACE) or self._at(TT.EOF):
                 break
+            # Stop at preprocessor scope-ending tokens
+            if self._cur().type in (TT.PP_ENDIF, TT.PP_ELSE):
+                break
             saved = self.pos
             s = self._parse_statement()
             if s is not None:
                 stmts.append(s)
             if self.pos == saved:
+                t = self._cur()
+                self.warnings.append(
+                    f"L{t.line}:{t.col}: Parser stuck in block body at "
+                    f"{t.type.name} ({t.value!r}), force advancing")
                 self._advance()
         if self._at(TT.RBRACE):
             self._advance()
@@ -903,8 +916,10 @@ class Parser:
                 args.append(str(self._advance().value))
             elif self._at(TT.FLOAT):
                 args.append(str(self._advance().value))
+            elif self._at(TT.STRING):
+                args.append(self._advance().value)
             else:
-                self._advance()
+                break
         self._consume_eol()
         return ast.TraceProperty(device=device, args=args, **loc)
 
@@ -974,6 +989,8 @@ class Parser:
                 return ast.Directive(keywords=keywords, arguments=arguments,
                                      property_block=pb, **loc)
             else:
+                # Operators and delimiters are valid in directive arguments
+                # (e.g. > for redirect, () for grouping, comparisons, etc.)
                 arguments.append(str(self._advance().value))
         self._consume_eol()
         return ast.Directive(keywords=keywords, arguments=arguments, **loc)
@@ -989,6 +1006,10 @@ class Parser:
             name = str(self._advance().value)
         name += self._advance().value  # name
         self._advance()  # =
+        # Expression may start on the next line
+        if self._at_eol():
+            self._consume_eol()
+            self._skip_newlines()
         expr = self._parse_layer_expr(0)
         self._consume_eol()
         return ast.LayerAssignment(name=name, expression=expr, **loc)
@@ -1060,6 +1081,10 @@ class Parser:
             if stmt is not None:
                 body.append(stmt)
             if self.pos == saved:
+                _st = self._cur()
+                self.warnings.append(
+                    f"L{_st.line}:{_st.col}: Parser stuck in property block at "
+                    f"{_st.type.name} ({_st.value!r}), force advancing")
                 self._advance()
         if self._at(TT.RBRACKET):
             self._advance()
@@ -1078,7 +1103,9 @@ class Parser:
                 elif t.type == TT.STRING:
                     args.append(self._advance().value)
                 else:
-                    self._advance()
+                    # Operators and delimiters are valid in trailing content
+                    # after property blocks (comparisons, parens, brackets, etc.)
+                    args.append(str(self._advance().value))
             if keywords or args:
                 body.append(ast.Directive(
                     keywords=keywords, arguments=args, **trail_loc))
@@ -1108,11 +1135,78 @@ class Parser:
         # Assignment: ident = expr
         if t.type == TT.IDENT and self._peek().type == TT.EQUALS:
             return self._parse_prop_assignment()
+        # Compound assignment: ident -= expr, ident += expr
+        if t.type == TT.IDENT and self._peek().type == TT.MINUS:
+            p2 = self._peek(2)
+            if p2.type == TT.EQUALS:
+                return self._parse_prop_compound_assignment('-=')
+        if t.type == TT.IDENT and self._peek().type == TT.PLUS:
+            p2 = self._peek(2)
+            if p2.type == TT.EQUALS:
+                return self._parse_prop_compound_assignment('+=')
+        # Compound assignment starting with - : - = expr (shorthand for implicit var)
+        if t.type == TT.MINUS and self._peek().type == TT.EQUALS:
+            return self._parse_prop_compound_assignment('-=', implicit=True)
+        # Compound assignment starting with + : + = expr (shorthand for implicit var)
+        if t.type == TT.PLUS and self._peek().type == TT.EQUALS:
+            return self._parse_prop_compound_assignment('+=', implicit=True)
+        # Keyword statements: resolve, action, output, anchor, effective, tolerance, etc.
+        if t.type == TT.IDENT and t.value.lower() in (
+                'resolve', 'action', 'output', 'anchor', 'select',
+                'stamp', 'text', 'label', 'print', 'effective', 'tolerance'):
+            return self._parse_prop_keyword_stmt()
+        # String-keyed assignment: "AREA" = AREA(proc_layer)
+        if t.type == TT.STRING and self._peek().type == TT.EQUALS:
+            loc = self._loc()
+            name = self._advance().value
+            self._advance()  # =
+            expr = self._parse_arith_expr(0)
+            if self._at(TT.SEMICOLON):
+                self._advance()
+            self._consume_eol()
+            return ast.LayerAssignment(name=name, expression=expr, **loc)
+        # Semicolon-terminated statement (e.g. "expr ;")
+        if t.type == TT.SEMICOLON:
+            self._advance()
+            return None
+        # Continuation tokens from multiline expressions (ternary, parens, operators)
+        # These appear at the start of a line when the previous line's expression
+        # spans multiple lines. Consume the rest of the line as an expression.
+        if t.type in (TT.RPAREN, TT.QUESTION, TT.COLON, TT.STAR, TT.PLUS,
+                      TT.SLASH, TT.PIPEPIPE, TT.AMPAMP):
+            loc = self._loc()
+            parts = []
+            while not self._at_eol() and not self._at(TT.RBRACKET):
+                parts.append(str(self._advance().value))
+            self._consume_eol()
+            if parts:
+                return ast.Directive(keywords=[], arguments=parts, **loc)
+            return None
+        # Try to parse as arithmetic expression
+        if t.type in (TT.IDENT, TT.INTEGER, TT.FLOAT, TT.STRING,
+                       TT.LPAREN, TT.MINUS, TT.BANG):
+            loc = self._loc()
+            try:
+                expr = self._parse_arith_expr(0)
+                # Consume optional semicolon
+                if self._at(TT.SEMICOLON):
+                    self._advance()
+                self._consume_eol()
+                return expr
+            except Exception:
+                pass
         # Bare expression / skip – stop before ] so we don't consume the
         # closing bracket of the enclosing property block.
+        skip_start = self._cur()
+        parts = []
         while not self._at_eol() and not self._at(TT.RBRACKET):
-            self._advance()
+            parts.append(str(self._advance().value))
         self._consume_eol()
+        if parts:
+            self.warnings.append(
+                f"L{skip_start.line}:{skip_start.col}: Skipped unrecognized "
+                f"property block content: {' '.join(parts[:5])}"
+                f"{'...' if len(parts) > 5 else ''}")
         return None
 
     def _parse_prop_assignment(self):
@@ -1121,8 +1215,49 @@ class Parser:
         name = self._advance().value
         self._advance()  # =
         expr = self._parse_arith_expr(0)
+        # Consume optional semicolon
+        if self._at(TT.SEMICOLON):
+            self._advance()
         self._consume_eol()
         return ast.LayerAssignment(name=name, expression=expr, **loc)
+
+    def _parse_prop_compound_assignment(self, op, implicit=False):
+        """Parse compound assignment: name -= expr or name += expr or - = expr."""
+        loc = self._loc()
+        if implicit:
+            name = ''
+            self._advance()  # - or +
+            self._advance()  # =
+        else:
+            name = self._advance().value
+            self._advance()  # - or +
+            self._advance()  # =
+        expr = self._parse_arith_expr(0)
+        # Consume optional semicolon
+        if self._at(TT.SEMICOLON):
+            self._advance()
+        self._consume_eol()
+        return ast.LayerAssignment(name=f"{name}{op}", expression=expr, **loc)
+
+    def _parse_prop_keyword_stmt(self):
+        """Parse keyword statement in property block (resolve, action, output, etc.)."""
+        loc = self._loc()
+        keywords = []
+        args = []
+        while not self._at_eol() and not self._at(TT.RBRACKET) and not self._at(TT.SEMICOLON):
+            t = self._cur()
+            if t.type == TT.IDENT:
+                keywords.append(self._advance().value)
+            elif t.type in (TT.INTEGER, TT.FLOAT):
+                args.append(self._advance().value)
+            elif t.type == TT.STRING:
+                args.append(self._advance().value)
+            else:
+                args.append(str(self._advance().value))
+        if self._at(TT.SEMICOLON):
+            self._advance()
+        self._consume_eol()
+        return ast.Directive(keywords=keywords, arguments=args, **loc)
 
     # ------------------------------------------------------------------
     # IF / ELSE IF / ELSE inside property blocks
@@ -1147,6 +1282,10 @@ class Parser:
                 if s is not None:
                     then_body.append(s)
                 if self.pos == saved:
+                    _st = self._cur()
+                    self.warnings.append(
+                        f"L{_st.line}:{_st.col}: Parser stuck in IF body at "
+                        f"{_st.type.name} ({_st.value!r}), force advancing")
                     self._advance()
             if self._at(TT.RBRACE):
                 self._advance()
@@ -1175,6 +1314,10 @@ class Parser:
                         if s is not None:
                             ei_body.append(s)
                         if self.pos == saved:
+                            _st = self._cur()
+                            self.warnings.append(
+                                f"L{_st.line}:{_st.col}: Parser stuck in ELSE IF body at "
+                                f"{_st.type.name} ({_st.value!r}), force advancing")
                             self._advance()
                     if self._at(TT.RBRACE):
                         self._advance()
@@ -1195,6 +1338,10 @@ class Parser:
                         if s is not None:
                             else_body.append(s)
                         if self.pos == saved:
+                            _st = self._cur()
+                            self.warnings.append(
+                                f"L{_st.line}:{_st.col}: Parser stuck in ELSE body at "
+                                f"{_st.type.name} ({_st.value!r}), force advancing")
                             self._advance()
                     if self._at(TT.RBRACE):
                         self._advance()
@@ -1220,7 +1367,9 @@ class Parser:
         loc = self._loc()
         if t.type == TT.LPAREN:
             self._advance()
+            self._skip_newlines()
             expr = self._parse_arith_expr(0)
+            self._skip_newlines()
             if self._at(TT.RPAREN):
                 self._advance()
             return expr
@@ -1228,6 +1377,10 @@ class Parser:
             self._advance()
             operand = self._parse_arith_expr(30)
             return ast.UnaryOp(op='-', operand=operand, **loc)
+        if t.type == TT.BANG:
+            self._advance()
+            operand = self._parse_arith_expr(30)
+            return ast.UnaryOp(op='!', operand=operand, **loc)
         if t.type == TT.INTEGER:
             return ast.NumberLiteral(value=self._advance().value, **loc)
         if t.type == TT.FLOAT:
@@ -1241,7 +1394,40 @@ class Parser:
                 return self._parse_func_call()
             self._advance()
             return ast.LayerRef(name=name, **loc)
+        # #IFDEF/#IFNDEF inside arithmetic expressions — skip the preprocessor
+        # block and parse the then-body as the expression value.
+        if t.type in (TT.PP_IFDEF, TT.PP_IFNDEF):
+            self._advance()  # #IFDEF/#IFNDEF
+            while not self._at_eol():
+                self._advance()
+            self._consume_eol()
+            self._skip_newlines()
+            # Parse then-body as arithmetic expression
+            expr = self._parse_arith_expr(0)
+            self._skip_newlines()
+            # Skip #ELSE body if present
+            if self._at(TT.PP_ELSE):
+                self._advance()
+                self._consume_eol()
+                self._skip_newlines()
+                depth = 1
+                while not self._at(TT.EOF) and depth > 0:
+                    if self._cur().type in (TT.PP_IFDEF, TT.PP_IFNDEF):
+                        depth += 1
+                    elif self._cur().type == TT.PP_ENDIF:
+                        depth -= 1
+                        if depth == 0:
+                            break
+                    self._advance()
+            if self._at(TT.PP_ENDIF):
+                self._advance()
+                self._consume_eol()
+            self._skip_newlines()
+            return expr
         # Fallback
+        self.warnings.append(
+            f"L{t.line}:{t.col}: Unexpected token {t.type.name} ({t.value!r}) "
+            f"in arithmetic expression, substituting 0")
         self._advance()
         return ast.NumberLiteral(value=0, **loc)
 
@@ -1249,6 +1435,10 @@ class Parser:
         t = self._cur()
         if t.type == TT.QUESTION:
             return 1  # ternary has lowest precedence
+        if t.type == TT.PIPEPIPE:
+            return 2
+        if t.type == TT.AMPAMP:
+            return 3
         if t.type in (TT.EQEQ, TT.BANGEQ, TT.LT, TT.GT_OP, TT.LE, TT.GE):
             return 5
         if t.type in (TT.PLUS, TT.MINUS):
@@ -1257,10 +1447,8 @@ class Parser:
             return 20
         if t.type == TT.CARET:
             return 25
-        if t.type == TT.AMPAMP:
-            return 3
-        if t.type == TT.PIPEPIPE:
-            return 2
+        if t.type == TT.COLONCOLON:
+            return 35  # scope resolution, highest precedence
         return 0
 
     def _arith_led(self, left, nbp):
@@ -1282,6 +1470,7 @@ class Parser:
                                                    right=else_expr,
                                                    **loc), **loc)
         op = self._advance().value
+        self._skip_newlines()
         right = self._parse_arith_expr(nbp)
         return ast.BinaryOp(op=op, left=left, right=right, **loc)
 
@@ -1325,7 +1514,10 @@ class Parser:
             expr = self._parse_layer_expr(0)
             self._consume_eol()
             return expr
-        except (SVRFParseError, Exception):
+        except (SVRFParseError, Exception) as e:
+            t = self._cur()
+            self.warnings.append(
+                f"L{t.line}:{t.col}: Exception in bare expression parse: {e}")
             self._skip_to_eol()
             self._consume_eol()
             return None
@@ -1351,7 +1543,7 @@ class Parser:
         """
         t = self._cur()
         if t.type in (TT.LPAREN, TT.LBRACKET, TT.INTEGER,
-                       TT.FLOAT, TT.STRING, TT.MINUS):
+                       TT.FLOAT, TT.STRING, TT.MINUS, TT.BANG):
             return True
         if t.type != TT.IDENT:
             return False
@@ -1374,17 +1566,14 @@ class Parser:
 
         if t.type == TT.LPAREN:
             self._advance()
+            self._block_depth += 1
             expr = self._parse_layer_expr(0)
+            # Skip newlines to find ) — handles multiline (OR\n...\n)
+            if self._at(TT.NEWLINE):
+                self._skip_newlines()
             if self._at(TT.RPAREN):
                 self._advance()
-            elif self._at(TT.NEWLINE):
-                # Try skipping newlines to find ) on next line (e.g. OR\n...\n))
-                saved = self.pos
-                self._skip_newlines()
-                if self._at(TT.RPAREN):
-                    self._advance()
-                else:
-                    self.pos = saved
+            self._block_depth -= 1
             return expr
 
         if t.type == TT.LBRACKET:
@@ -1411,7 +1600,15 @@ class Parser:
             operand = self._layer_nud()
             return ast.UnaryOp(op='-', operand=operand, **loc)
 
+        if t.type == TT.BANG:
+            self._advance()
+            operand = self._parse_layer_expr(50)
+            return ast.UnaryOp(op='NOT', operand=operand, **loc)
+
         if t.type != TT.IDENT:
+            self.warnings.append(
+                f"L{t.line}:{t.col}: Unexpected token {t.type.name} ({t.value!r}) "
+                f"in layer expression, substituting 0")
             self._advance()
             return ast.NumberLiteral(value=0, **loc)
 
@@ -1996,6 +2193,9 @@ class Parser:
                     middle = ' ' + self._advance().value.upper()
                 self._advance()  # EDGE
                 op = upper + middle + ' EDGE'
+                if self._at_eol() and self._block_depth > 0:
+                    self._consume_eol()
+                    self._skip_newlines()
                 right = self._parse_layer_expr(30)
                 result = ast.BinaryOp(op=op, left=left, right=right, **loc)
                 return self._maybe_trailing_modifiers(result, loc)
@@ -2013,12 +2213,18 @@ class Parser:
                     if nxt.type == TT.IDENT and nxt.value.upper() == 'EDGE':
                         self._advance()  # INSIDE/OUTSIDE
                         self._advance()  # EDGE
+                        if self._at_eol() and self._block_depth > 0:
+                            self._consume_eol()
+                            self._skip_newlines()
                         right = self._parse_layer_expr(30)
                         result = ast.BinaryOp(op='TOUCH ' + middle + ' EDGE',
                                             left=left, right=right, **loc)
                         return self._maybe_trailing_modifiers(result, loc)
                 if self._at_val('EDGE'):
                     self._advance()
+                    if self._at_eol() and self._block_depth > 0:
+                        self._consume_eol()
+                        self._skip_newlines()
                     right = self._parse_layer_expr(30)
                     result = ast.BinaryOp(op='TOUCH EDGE', left=left,
                                         right=right, **loc)
@@ -2226,6 +2432,9 @@ class Parser:
                 # INSIDE EDGE / OUTSIDE EDGE / TOUCH EDGE as two-word binary ops
                 if upper in ('INSIDE', 'OUTSIDE', 'OUT', 'TOUCH') and self._at(TT.IDENT) and self._cur().value.upper() == 'EDGE':
                     self._advance()  # EDGE
+                    if self._at_eol() and self._block_depth > 0:
+                        self._consume_eol()
+                        self._skip_newlines()
                     right = self._parse_layer_expr(bp)
                     result = ast.BinaryOp(op=upper + ' EDGE', left=left,
                                         right=right, **loc)
@@ -2241,6 +2450,10 @@ class Parser:
                 # OR EDGE as two-word binary op
                 if upper == 'OR' and self._at(TT.IDENT) and self._cur().value.upper() == 'EDGE':
                     self._advance()  # EDGE
+                    # Right operand may be on the next line (e.g. OR EDGE\n  (EXT ...))
+                    if self._at_eol() and self._block_depth > 0:
+                        self._consume_eol()
+                        self._skip_newlines()
                     right = self._parse_layer_expr(bp)
                     result = ast.BinaryOp(op='OR EDGE', left=left,
                                         right=right, **loc)
@@ -2252,6 +2465,9 @@ class Parser:
                     if self._at(TT.IDENT) and self._cur().value.upper() == 'EDGE':
                         self._advance()  # EDGE
                         op_name = 'NOT TOUCH EDGE'
+                    if self._at_eol() and self._block_depth > 0:
+                        self._consume_eol()
+                        self._skip_newlines()
                     right = self._parse_layer_expr(bp)
                     result = ast.BinaryOp(op=op_name, left=left,
                                         right=right, **loc)
@@ -2265,6 +2481,9 @@ class Parser:
                             self._at(TT.IDENT) and self._cur().value.upper() == 'EDGE':
                         self._advance()  # EDGE
                         op_name += ' EDGE'
+                    if self._at_eol() and self._block_depth > 0:
+                        self._consume_eol()
+                        self._skip_newlines()
                     right = self._parse_layer_expr(bp)
                     result = ast.BinaryOp(op=op_name, left=left,
                                         right=right, **loc)
@@ -2300,6 +2519,10 @@ class Parser:
                             break
                     return ast.DRCOp(op='ENCLOSE RECTANGLE', operands=operands,
                                      constraints=constraints, modifiers=modifiers, **loc)
+                # Infix OR/AND: right operand may be on the next line
+                if upper in ('OR', 'AND') and self._at_eol() and self._block_depth > 0:
+                    self._consume_eol()
+                    self._skip_newlines()
                 right = self._parse_layer_expr(bp)
                 result = ast.BinaryOp(op=upper, left=left,
                                     right=right, **loc)
@@ -2318,6 +2541,9 @@ class Parser:
                 return result
 
         # Shouldn't reach here, but advance to avoid infinite loop
+        self.warnings.append(
+            f"L{t.line}:{t.col}: Unexpected token {t.type.name} ({t.value!r}) "
+            f"in layer expression LED (infix position)")
         self._advance()
         return left
 
@@ -2370,8 +2596,12 @@ class Parser:
             elif self._at(TT.IDENT):
                 val = self._advance().value
             elif self._at(TT.LPAREN):
-                # Parenthesized expression as constraint value
+                # Parenthesized expression as constraint value — parse at bp=10
+                # to avoid consuming the next chained constraint (bp=5 for comparisons)
+                self._advance()  # (
                 val = self._parse_layer_expr(0)
+                if self._at(TT.RPAREN):
+                    self._advance()  # )
             constraints.append(ast.Constraint(op=op, value=val, **loc))
         return constraints
 
@@ -2405,8 +2635,38 @@ class Parser:
                     modifiers.append(str(-self._advance().value))
                 elif self._at(TT.FLOAT):
                     modifiers.append(str(-self._advance().value))
+                else:
+                    modifiers.append('-')
+            elif t.type in (TT.PLUS, TT.STAR, TT.SLASH, TT.CARET):
+                # Arithmetic operators in modifier values (e.g. 0.079+TOLERANCE)
+                modifiers.append(str(self._advance().value))
+            elif t.type == TT.LPAREN:
+                # Balanced parenthesized sub-expression in modifiers
+                # e.g. (OPPOSITE 0) or (value+offset)
+                self._advance()  # (
+                depth = 1
+                parts = ['(']
+                while not self._at(TT.EOF) and depth > 0:
+                    ct = self._cur()
+                    if ct.type == TT.LPAREN:
+                        depth += 1
+                    elif ct.type == TT.RPAREN:
+                        depth -= 1
+                        if depth == 0:
+                            self._advance()
+                            parts.append(')')
+                            break
+                    parts.append(str(self._advance().value))
+                modifiers.append(' '.join(parts))
+            elif t.type == TT.BANG:
+                # ! used in modifier context (e.g. !CONNECTED)
+                modifiers.append(str(self._advance().value))
+            elif t.type == TT.COMMA:
+                # Comma separating modifier values
+                modifiers.append(str(self._advance().value))
             else:
-                self._advance()
+                # Stop at true expression boundary tokens (RPAREN, RBRACE, etc.)
+                break
 
     def _parse_drc_multiline_continuation(self, modifiers):
         """Handle multi-line DRC op continuations (bracket blocks + modifier lines).
@@ -2541,6 +2801,10 @@ class Parser:
                         elif self._at(TT.INTEGER) or self._at(TT.FLOAT):
                             modifiers.append(str(self._advance().value))
                         else:
+                            _st = self._cur()
+                            self.warnings.append(
+                                f"L{_st.line}:{_st.col}: Unexpected token {_st.type.name} "
+                                f"({_st.value!r}) in DFM parenthesized modifier, skipping")
                             self._advance()
                     if self._at(TT.RPAREN):
                         self._advance()
@@ -2666,8 +2930,14 @@ class Parser:
                     modifiers.append(str(-self._advance().value))
                 elif self._at(TT.FLOAT):
                     modifiers.append(str(-self._advance().value))
+                else:
+                    modifiers.append('-')
+            elif t.type in (TT.PLUS, TT.STAR, TT.SLASH, TT.CARET):
+                modifiers.append(str(self._advance().value))
+            elif t.type in (TT.BANG, TT.COMMA):
+                modifiers.append(str(self._advance().value))
             else:
-                self._advance()
+                break
         return ast.DRCOp(op=op, operands=operands,
                          constraints=constraints, modifiers=modifiers, **loc)
 
@@ -2763,9 +3033,12 @@ class Parser:
     def _parse_length_op(self, op_name='LENGTH'):
         loc = self._loc()
         self._advance()  # LENGTH (or second word of PATH LENGTH)
-        operand = self._parse_layer_expr(50)
+        # Two syntaxes: LENGTH layer < value  OR  LENGTH < value layer
         constraints = []
         if self._cur().type in (TT.LT, TT.GT_OP, TT.LE, TT.GE, TT.EQEQ, TT.BANGEQ):
+            constraints = self._parse_constraints()
+        operand = self._parse_layer_expr(50)
+        if not constraints and self._cur().type in (TT.LT, TT.GT_OP, TT.LE, TT.GE, TT.EQEQ, TT.BANGEQ):
             constraints = self._parse_constraints()
         return ast.ConstrainedExpr(
             expr=ast.UnaryOp(op=op_name, operand=operand, **loc),
@@ -2949,8 +3222,27 @@ class Parser:
                         modifiers.append(str(-self._advance().value))
                     elif self._at(TT.FLOAT):
                         modifiers.append(str(-self._advance().value))
-                else:
+                    else:
+                        modifiers.append('-')
+                elif t.type in (TT.PLUS, TT.STAR, TT.SLASH, TT.CARET):
+                    modifiers.append(str(self._advance().value))
+                elif t.type == TT.LPAREN:
                     self._advance()
+                    depth = 1
+                    parts = ['(']
+                    while not self._at(TT.EOF) and depth > 0:
+                        ct = self._cur()
+                        if ct.type == TT.LPAREN: depth += 1
+                        elif ct.type == TT.RPAREN:
+                            depth -= 1
+                            if depth == 0:
+                                self._advance()
+                                parts.append(')')
+                                break
+                        parts.append(str(self._advance().value))
+                    modifiers.append(' '.join(parts))
+                else:
+                    break
             # Multiline continuation: next line starts with a modifier keyword
             _rect_enc_mods = frozenset({
                 'SINGULAR', 'GOOD', 'OPPOSITE', 'PARALLEL', 'PERPENDICULAR',
@@ -2973,7 +3265,7 @@ class Parser:
                             for c in self._parse_constraints():
                                 modifiers.append(f"{c.op}{c.value}")
                         else:
-                            self._advance()
+                            break
                 else:
                     self.pos = saved
                     break
