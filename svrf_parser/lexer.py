@@ -14,6 +14,7 @@ _PP_MAP = {
     'ENCRYPT': TT.PP_ENCRYPT,
     'ENDCRYPT': TT.PP_ENDCRYPT,
     'DECRYPT': TT.PP_DECRYPT,
+    'UNDEFINE': TT.PP_UNDEFINE,
 }
 
 
@@ -370,11 +371,13 @@ class Lexer:
             self._emit(TT.AT, '@')
         elif ch == ';':
             self._emit(TT.SEMICOLON, ';')
+        elif ch == '?':
+            self._emit(TT.QUESTION, '?')
         elif ch == ':':
             if self._match(':'):
                 self._emit(TT.COLONCOLON, '::')
             else:
-                self._emit(TT.IDENT, ':')
+                self._emit(TT.COLON, ':')
         elif ch == '$':
             # Environment variable reference $VAR
             start = self.pos
