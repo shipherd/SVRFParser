@@ -13,7 +13,7 @@ from pathlib import Path
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-DOCS_TOC = Path(r"$SVRF_LOCAL_INPUT")
+DOCS_TOC = None
 MATRIX_PATH = Path(__file__).parent / "coverage_matrix.json"
 
 # Constructs known to be supported by the parser, extracted from parser.py
@@ -215,4 +215,8 @@ def main():
 
 
 if __name__ == '__main__':
+    if len(sys.argv) < 2:
+        print("Usage: python coverage_analysis.py <docs_toc_json>")
+        sys.exit(1)
+    DOCS_TOC = Path(sys.argv[1])
     sys.exit(main())
