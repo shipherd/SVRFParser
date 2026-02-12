@@ -4,9 +4,7 @@ A pure-Python parser for SVRF (Standard Verification Rule Format) files used by 
 
 ## Parsing Quality
 
-Tested against 16 real-world SVRF sample files (total ~27 MB, 67,378 statements):
-
-- **0 parser warnings** across all files
+- **0 parser warnings** across all tested files
 - **119 unit tests** covering all major construct categories
 - Handles DRC, LVS, and antenna rule decks
 - Supports multiline expressions, `#IFDEF`-split blocks, deeply nested ternary chains with embedded preprocessor directives
@@ -15,18 +13,25 @@ Tested against 16 real-world SVRF sample files (total ~27 MB, 67,378 statements)
 
 ```
 svrf_parser/
-  __init__.py        # Package entry, exports parse / parse_file / validate_svrf
-  tokens.py          # TokenType enum and Token dataclass
-  lexer.py           # Lexer: source text -> token stream
-  ast_nodes.py       # AST node class hierarchy
-  parser.py          # Two-pass recursive descent + Pratt parser
+  __init__.py              # Package entry, exports parse / parse_file / validate_svrf / AstVisitor
+  tokens.py                # TokenType enum and Token dataclass
+  lexer.py                 # Lexer: source text -> token stream
+  keywords.py              # Centralized keyword registry, derived frozensets
+  ast_nodes.py             # AST node class hierarchy with visitor accept()
+  visitor.py               # AstVisitor base class + WalkVisitor example
+  parser_base.py           # ParserBase: __init__, prescan, token stream helpers
+  expression_parser.py     # ExpressionMixin: Pratt parser for layer/arithmetic expressions
+  drc_op_parser.py         # DRCOpMixin: DRC operation parsing (INT, EXT, SIZE, etc.)
+  property_block_parser.py # PropertyBlockMixin: property block and IF/ELSE parsing
+  statement_parser.py      # StatementMixin: top-level statement dispatch and parsing
+  parser.py                # Parser class: composes all mixins
 tests/
-  helpers.py         # Shared test utilities (parse_one, parse_expr, etc.)
-  conftest.py        # pytest fixtures
-  tier1/             # Unit tests by construct category (119 tests)
-  tier2/             # Integration tests on real sample files
-test_samples.py      # Batch test harness for sample files
-baseline.py          # Baseline metrics collector
+  helpers.py               # Shared test utilities (parse_one, parse_expr, etc.)
+  conftest.py              # pytest fixtures
+  tier1/                   # Unit tests by construct category (119 tests)
+  tier2/                   # Integration tests on real sample files
+test_samples.py            # Batch test harness for sample files
+baseline.py                # Baseline metrics collector
 ```
 
 ## Usage
@@ -129,6 +134,26 @@ for stmt in tree.statements:
 
 ### Walking the Full AST
 
+Using the visitor pattern:
+
+```python
+from svrf_parser import parse_file, AstVisitor
+from svrf_parser.ast_nodes import LayerDef, RuleCheckBlock
+
+class LayerCounter(AstVisitor):
+    def __init__(self):
+        self.count = 0
+    def visit_LayerDef(self, node):
+        self.count += 1
+
+tree = parse_file("path/to/rules.drc")
+counter = LayerCounter()
+tree.accept(counter)
+print(f"Found {counter.count} layer definitions")
+```
+
+Or manually:
+
 ```python
 from svrf_parser import ast_nodes as ast
 
@@ -204,6 +229,7 @@ python coverage_analysis.py /path/to/svrf_docs/toc.json
 | `validate_svrf_file(path)` | Validate file, return `ValidationResult` |
 | `is_valid_svrf(text, filename)` | Validate text, return `bool` |
 | `is_valid_svrf_file(path)` | Validate file, return `bool` |
+| `AstVisitor` | Base class for AST visitors (subclass and override `visit_XXX` methods) |
 
 ## AST Node Types
 
@@ -255,6 +281,7 @@ All nodes inherit from `AstNode` and carry `line` and `col` source location attr
 | `DRCOp` | `op`, `operands`, `constraints`, `modifiers` | `INT`, `EXT`, `ENC`, `DENSITY`, `SIZE`, `RECTANGLE`, `RECTANGLE ENCLOSURE`, `EXPAND EDGE`, `OFFGRID`, `ROTATE`, `DFM PROPERTY`, `NET AREA RATIO`, etc. |
 | `IfExpr` | `condition`, `then_body`, `elseifs`, `else_body` | IF/ELSE inside property blocks |
 | `PropertyBlock` | `properties`, `body` | `[ PROPERTY ... ]` |
+| `ErrorNode` | `message`, `skipped_text` | Unrecognized or erroneous construct |
 
 ## Supported SVRF Syntax
 
@@ -277,11 +304,23 @@ All nodes inherit from `AstNode` and carry `line` and `col` source location attr
 
 ## Architecture
 
-The parser uses a two-pass approach:
+The parser uses a **mixin-based architecture** with a two-pass approach:
 
-1. **Prescan** (`_prescan`): Scans the token stream to build a symbol table of known layer names (from `LAYER` definitions, layer assignments, rule check block names). This resolves the fundamental SVRF ambiguity where any identifier could be either a keyword or a layer name.
+1. **Prescan** (`ParserBase._prescan`): Scans the token stream to build a symbol table of known layer names (from `LAYER` definitions, layer assignments, `VARIABLE`, `DMACRO`, `#DEFINE`). This resolves the fundamental SVRF ambiguity where any identifier could be either a keyword or a layer name.
 
 2. **Parse**: Recursive descent for statements, Pratt parsing for expressions. The symbol table from pass 1 guides disambiguation — identifiers in the symbol table are treated as layer references even when they match SVRF keywords.
+
+The `Parser` class composes five modules via mixins:
+
+| Module | Responsibility |
+|--------|---------------|
+| `ParserBase` | Token stream helpers, prescan, symbol table |
+| `ExpressionMixin` | Pratt parser for layer and arithmetic expressions |
+| `DRCOpMixin` | DRC operation parsing (INT, EXT, SIZE, RECTANGLE, etc.) |
+| `PropertyBlockMixin` | Property blocks and IF/ELSE parsing |
+| `StatementMixin` | Top-level statement dispatch and parsing |
+
+Large if/elif chains in `_layer_nud`, `_layer_led`, and `_dispatch_ident` use **dispatch tables** for extensibility. Keywords are declared once in a **centralized registry** (`keywords.py`), with role-based frozensets derived automatically. AST nodes support the **visitor pattern** via `accept(visitor)` / `visit_NodeType(node)` double-dispatch.
 
 ## Requirements
 
