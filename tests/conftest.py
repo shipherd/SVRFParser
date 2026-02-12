@@ -17,7 +17,7 @@ def pytest_addoption(parser):
     parser.addoption(
         "--samples-dir",
         action="store",
-        default=r"C:\Users\Boshe\Desktop\tmp\svrf_samples",
+        default=os.environ.get("SVRF_SAMPLES_DIR", ""),
         help="Path to SVRF sample files directory",
     )
     parser.addoption(

@@ -18,7 +18,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from svrf_parser import parse_with_diagnostics
 from svrf_parser.ast_nodes import *
 
-SAMPLES_DIR = Path(r"C:\Users\Boshe\Desktop\tmp\svrf_samples")
+SAMPLES_DIR = None
 REPORT_PATH = Path(__file__).parent / "baseline_report.json"
 
 _SVRF_NODE_TYPES = (
@@ -222,4 +222,8 @@ def main():
 
 
 if __name__ == '__main__':
+    if len(sys.argv) < 2:
+        print("Usage: python baseline.py <samples_dir>")
+        sys.exit(1)
+    SAMPLES_DIR = Path(sys.argv[1])
     sys.exit(main())

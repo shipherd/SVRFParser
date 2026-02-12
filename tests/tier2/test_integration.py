@@ -11,7 +11,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 from svrf_parser import parse_with_diagnostics
 from svrf_parser.ast_nodes import *
 
-SAMPLES_DIR = Path(r"C:\Users\Boshe\Desktop\tmp\svrf_samples")
+SAMPLES_DIR = Path(os.environ.get("SVRF_SAMPLES_DIR", ""))
 
 _SVRF_NODE_TYPES = (
     LayerDef, LayerMap, LayerAssignment,
