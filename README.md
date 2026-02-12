@@ -1,18 +1,26 @@
-# SVRFParser (This lib is still under constructions, use this lib at your own risks)
+# SVRFParser
 
-A pure-Python parser for SVRF (Standard Verification Rule Format) files used by Calibre DRC, LVS, and antenna rule decks. Built with hand-written recursive descent and Pratt parsing. No third-party dependencies.
+A pure-Python parser for SVRF (Standard Verification Rule Format) files used by Calibre DRC, LVS, and antenna rule decks. Built with hand-written recursive descent + Pratt parsing and two-pass symbol table disambiguation. No third-party dependencies.
 
 ## Project Structure
 
 ```
 svrf_parser/
-  __init__.py        # Package entry point, exports parse / parse_file
+  __init__.py        # Package entry, exports parse / parse_file / validate_svrf
   tokens.py          # TokenType enum and Token dataclass
   lexer.py           # Lexer: source text -> token stream
   ast_nodes.py       # AST node class hierarchy
-  parser.py          # Recursive descent + Pratt parser
+  parser.py          # Two-pass recursive descent + Pratt parser
+  printer.py         # AST -> SVRF text (for round-trip testing)
+tests/
+  helpers.py         # Shared test utilities (parse_one, parse_expr, etc.)
+  conftest.py        # pytest fixtures
+  tier1/             # Unit tests by construct category (110 tests)
+  tier2/             # Integration tests on real sample files
+  tier3/             # Round-trip tests (AST -> text -> AST)
+baseline.py          # Baseline metrics collector
+coverage_analysis.py # Grammar coverage analysis vs SVRF docs
 test_samples.py      # Batch test harness for sample files
-samples/             # Sample SVRF files
 ```
 
 ## Usage
@@ -25,8 +33,6 @@ from svrf_parser import parse_file
 tree = parse_file("path/to/calibre.drc")
 print(f"{len(tree.statements)} statements parsed")
 ```
-
-`parse_file` reads the file with UTF-8 encoding (replacing invalid bytes) and returns a `Program` AST node. The `Program.statements` list contains all top-level parsed statements.
 
 ### Parse a String
 
@@ -72,15 +78,33 @@ LayerAssignment 12
 RuleCheckBlock 14
 ```
 
-The optional second argument `filename` is used in error messages:
+### Parse with Diagnostics
 
 ```python
-tree = parse(text, filename="my_rules.drc")
+from svrf_parser import parse_with_diagnostics
+
+tree, warnings = parse_with_diagnostics(text)
+print(f"{len(warnings)} parser warnings")
+```
+
+### Validate SVRF
+
+```python
+from svrf_parser import validate_svrf, is_valid_svrf_file
+
+result = validate_svrf(text)
+if result:
+    print("Valid SVRF")
+else:
+    print(result.errors)
+
+# Or simply:
+is_valid_svrf_file("path/to/rules.drc")  # -> bool
 ```
 
 ### Inspecting AST Nodes
 
-Every AST node carries `line` and `col` attributes indicating its source location. Node-specific fields are accessed as regular attributes:
+Every AST node carries `line` and `col` attributes. Node-specific fields are accessed as regular attributes:
 
 ```python
 from svrf_parser import parse_file
@@ -91,180 +115,89 @@ tree = parse_file("path/to/rules.drc")
 for stmt in tree.statements:
     if isinstance(stmt, LayerDef):
         print(f"Line {stmt.line}: LAYER {stmt.name} {stmt.numbers}")
-
     elif isinstance(stmt, LayerAssignment):
         print(f"Line {stmt.line}: {stmt.name} = <expr>")
-
     elif isinstance(stmt, RuleCheckBlock):
-        print(f"Line {stmt.line}: Rule '{stmt.name}' "
-              f"with {len(stmt.body)} operations")
+        print(f"Line {stmt.line}: Rule '{stmt.name}' with {len(stmt.body)} operations")
 ```
 
-### Extracting Layer Definitions
-
-```python
-from svrf_parser import parse_file
-from svrf_parser.ast_nodes import LayerDef, LayerMap
-
-tree = parse_file("path/to/rules.drc")
-
-# Named layers: LAYER M1 10
-layers = [s for s in tree.statements if isinstance(s, LayerDef)]
-for layer in layers:
-    print(f"LAYER {layer.name} {layer.numbers}")
-
-# Layer mappings: LAYER MAP 62 DATATYPE 0 1062
-maps = [s for s in tree.statements if isinstance(s, LayerMap)]
-for m in maps:
-    print(f"LAYER MAP {m.gds_num} {m.map_type} {m.type_num} {m.internal_num}")
-```
-
-### Extracting Connectivity
-
-```python
-from svrf_parser.ast_nodes import Connect
-
-connects = [s for s in tree.statements if isinstance(s, Connect)]
-for c in connects:
-    kind = "SCONNECT" if c.soft else "CONNECT"
-    via = f" BY {c.via_layer}" if c.via_layer else ""
-    print(f"{kind} {' '.join(c.layers)}{via}")
-```
-
-### Extracting Device Definitions
-
-```python
-from svrf_parser.ast_nodes import Device
-
-devices = [s for s in tree.statements if isinstance(s, Device)]
-for d in devices:
-    print(f"DEVICE {d.device_type}({d.device_name}) "
-          f"seed={d.seed_layer} pins={d.pins}")
-    if d.cmacro:
-        print(f"  CMACRO {d.cmacro}")
-```
-
-### Extracting Derived Layers and Rule Checks
-
-```python
-from svrf_parser.ast_nodes import LayerAssignment, RuleCheckBlock, BinaryOp, DRCOp
-
-# Derived layers
-for s in tree.statements:
-    if isinstance(s, LayerAssignment):
-        expr = s.expression
-        if isinstance(expr, BinaryOp):
-            print(f"{s.name} = {expr.left} {expr.op} {expr.right}")
-
-# Rule check blocks
-for s in tree.statements:
-    if isinstance(s, RuleCheckBlock):
-        print(f"\nRule: {s.name}")
-        if s.description:
-            print(f"  Description: {s.description}")
-        for op in s.body:
-            if isinstance(op, DRCOp):
-                print(f"  {op.op} with constraints {op.constraints}")
-```
-
-### Working with Preprocessor Directives
-
-```python
-from svrf_parser.ast_nodes import Define, IfDef, Include
-
-for s in tree.statements:
-    if isinstance(s, Define):
-        print(f"#DEFINE {s.name} {s.value}")
-
-    elif isinstance(s, IfDef):
-        keyword = "#IFNDEF" if s.negated else "#IFDEF"
-        print(f"{keyword} {s.name}")
-        print(f"  then: {len(s.then_body)} statements")
-        print(f"  else: {len(s.else_body)} statements")
-
-    elif isinstance(s, Include):
-        print(f"#INCLUDE {s.path}")
-```
-
-### Walking the Full AST Recursively
+### Walking the Full AST
 
 ```python
 from svrf_parser import ast_nodes as ast
 
 def walk(node, depth=0):
     indent = "  " * depth
-    name = type(node).__name__
-    print(f"{indent}{name} (line {node.line})")
+    print(f"{indent}{type(node).__name__} (line {node.line})")
 
-    # Visit child nodes based on node type
     if isinstance(node, ast.Program):
-        for s in node.statements:
-            walk(s, depth + 1)
+        for s in node.statements: walk(s, depth + 1)
     elif isinstance(node, ast.RuleCheckBlock):
-        for s in node.body:
-            walk(s, depth + 1)
-    elif isinstance(node, ast.IfDef):
-        for s in node.then_body:
-            walk(s, depth + 1)
-        for s in node.else_body:
-            walk(s, depth + 1)
+        for s in node.body: walk(s, depth + 1)
     elif isinstance(node, ast.BinaryOp):
-        if node.left:
-            walk(node.left, depth + 1)
-        if node.right:
-            walk(node.right, depth + 1)
+        if node.left: walk(node.left, depth + 1)
+        if node.right: walk(node.right, depth + 1)
     elif isinstance(node, ast.UnaryOp):
-        if node.operand:
-            walk(node.operand, depth + 1)
+        if node.operand: walk(node.operand, depth + 1)
     elif isinstance(node, ast.LayerAssignment):
-        if node.expression:
-            walk(node.expression, depth + 1)
+        if node.expression: walk(node.expression, depth + 1)
     elif isinstance(node, ast.DMacro):
-        for s in node.body:
-            walk(s, depth + 1)
+        for s in node.body: walk(s, depth + 1)
+    elif isinstance(node, ast.IfDef):
+        for s in node.then_body: walk(s, depth + 1)
+        for s in node.else_body: walk(s, depth + 1)
 
 tree = parse_file("path/to/rules.drc")
 walk(tree)
 ```
 
-### Running the Test Suite
+## Running Tests
 
-The included `test_samples.py` parses all files under the `samples/` directory and reports results:
+### Unit tests (no sample files needed)
 
 ```bash
-python test_samples.py
+pytest tests/tier1/ -v
 ```
 
-Sample output:
+### Integration tests (requires sample files)
 
+```bash
+pytest tests/tier2/ -v --samples-dir /path/to/svrf_samples
+# or
+SVRF_SAMPLES_DIR=/path/to/svrf_samples pytest tests/tier2/ -v
 ```
-Found 16 sample files.
 
-----------------------------------------------------------------------
-  PASS  samples/calibre.drc (4.6MB, 11845 stmts, 2.56s)
-  PASS  samples/design.lvs (5.4MB, 2049 stmts, 2.87s)
-  ...
-----------------------------------------------------------------------
+### Batch test harness
 
-Summary: 16/16 passed, 0 failed
+```bash
+python test_samples.py /path/to/svrf_samples
+python test_samples.py /path/to/svrf_samples /path/to/single_file.drc
+```
+
+### Baseline metrics
+
+```bash
+python baseline.py /path/to/svrf_samples
+```
+
+### Coverage analysis
+
+```bash
+python coverage_analysis.py /path/to/svrf_docs/toc.json
 ```
 
 ## API Reference
 
-### `parse(text, filename="<input>")`
-
-Parse SVRF source text and return an AST.
-
-- **text** (`str`) — SVRF source code string
-- **filename** (`str`) — Optional filename used in error messages
-- **Returns** — `Program` node with a `statements` list
-
-### `parse_file(path)`
-
-Read and parse an SVRF file, returning an AST.
-
-- **path** (`str`) — Path to the SVRF file
-- **Returns** — `Program` node with a `statements` list
+| Function | Description |
+|----------|-------------|
+| `parse(text, filename)` | Parse SVRF text, return `Program` node |
+| `parse_file(path)` | Parse SVRF file, return `Program` node |
+| `parse_with_diagnostics(text, filename)` | Parse text, return `(Program, warnings)` |
+| `parse_file_with_diagnostics(path)` | Parse file, return `(Program, warnings)` |
+| `validate_svrf(text, filename)` | Validate text, return `ValidationResult` |
+| `validate_svrf_file(path)` | Validate file, return `ValidationResult` |
+| `is_valid_svrf(text, filename)` | Validate text, return `bool` |
+| `is_valid_svrf_file(path)` | Validate file, return `bool` |
 
 ## AST Node Types
 
@@ -277,7 +210,7 @@ All nodes inherit from `AstNode` and carry `line` and `col` source location attr
 | `Define` | `name`, `value` | `#DEFINE name value` |
 | `IfDef` | `name`, `negated`, `then_body`, `else_body` | `#IFDEF` / `#IFNDEF ... #ELSE ... #ENDIF` |
 | `Include` | `path` | `#INCLUDE "path"` |
-| `EncryptedBlock` | `content` | Opaque content between `#ENCRYPT` and `#ENDCRYPT` |
+| `EncryptedBlock` | `content` | `#ENCRYPT ... #ENDCRYPT` |
 
 ### Layer Definitions
 
@@ -291,12 +224,12 @@ All nodes inherit from `AstNode` and carry `line` and `col` source location attr
 | Node | Fields | SVRF Syntax |
 |------|--------|-------------|
 | `VariableDef` | `name`, `expr` | `VARIABLE name value` |
-| `Directive` | `keywords`, `arguments`, `property_block` | Multi-keyword directives (e.g. `LAYOUT PATH "file"`) |
+| `Directive` | `keywords`, `arguments`, `property_block` | `LAYOUT PATH "file"`, `DRC RESULTS DATABASE "out.db"` |
 | `LayerAssignment` | `name`, `expression` | `derived = M1 AND M2` |
 | `RuleCheckBlock` | `name`, `description`, `body` | `name { @desc ... }` |
 | `Connect` | `soft`, `layers`, `via_layer` | `CONNECT M1 M2 BY VIA1` |
-| `Device` | `device_type`, `device_name`, `seed_layer`, `pins`, `aux_layers`, `cmacro` | `DEVICE MOSFET ...` |
-| `DMacro` | `name`, `params`, `body` | `DMACRO name param1 ... { body }` |
+| `Device` | `device_type`, `device_name`, `seed_layer`, `pins`, `aux_layers`, `cmacro` | `DEVICE MOSFET(nmos) ...` |
+| `DMacro` | `name`, `params`, `body` | `DMACRO name p1 p2 { ... }` |
 | `Group` | `name`, `pattern` | `GROUP name pattern` |
 | `Attach` | `layer`, `net` | `ATTACH layer net` |
 | `TraceProperty` | `device`, `args` | `TRACE PROPERTY device ...` |
@@ -305,32 +238,47 @@ All nodes inherit from `AstNode` and carry `line` and `col` source location attr
 
 | Node | Fields | Description |
 |------|--------|-------------|
-| `BinaryOp` | `op`, `left`, `right` | Binary operations: `AND`, `OR`, `NOT`, `INSIDE`, `OUTSIDE`, `INTERACT`, etc. |
-| `UnaryOp` | `op`, `operand` | Unary operations: `NOT`, `COPY`, `HOLES`, etc. |
-| `LayerRef` | `name` | Layer reference |
+| `BinaryOp` | `op`, `left`, `right` | `AND`, `OR`, `NOT`, `XOR`, `INSIDE`, `OUTSIDE`, `OUT`, `INTERACT`, `TOUCH`, `ENCLOSE`, `CUT`, `STAMP`, compound ops (`INSIDE EDGE`, `TOUCH OUTSIDE EDGE`, `NOT IN`, etc.) |
+| `UnaryOp` | `op`, `operand` | `NOT`, `COPY`, `HOLES`, `DONUT`, `MERGE`, `PUSH` |
+| `LayerRef` | `name` | Layer name reference |
 | `NumberLiteral` | `value` | Numeric literal |
 | `StringLiteral` | `value` | String literal |
-| `FuncCall` | `name`, `args` | Function call: `AREA()`, `PERIM_CO()`, etc. |
-| `Constraint` | `op`, `value` | Constraint: `< 0.1`, `>= 2.0` |
-| `ConstrainedExpr` | `expr`, `constraints` | Expression with constraints |
-| `DRCOp` | `op`, `operands`, `constraints`, `modifiers` | DRC operations: `INT`, `EXT`, `ENC`, `DENSITY` |
-| `IfExpr` | `condition`, `then_body`, `elseifs`, `else_body` | IF/ELSE expression inside property blocks |
-| `PropertyBlock` | `properties`, `body` | `[ PROPERTY ... ]` property block |
-
+| `FuncCall` | `name`, `args` | `AREA()`, `PERIM_CO()`, `MIN()`, `MAX()` |
+| `Constraint` | `op`, `value` | `< 0.1`, `>= 2.0`, `!= 0` |
+| `ConstrainedExpr` | `expr`, `constraints`, `modifiers` | Expression with constraints and trailing modifiers |
+| `DRCOp` | `op`, `operands`, `constraints`, `modifiers` | `INT`, `EXT`, `ENC`, `DENSITY`, `SIZE`, `RECTANGLE`, `RECTANGLE ENCLOSURE`, `EXPAND EDGE`, `OFFGRID`, `ROTATE`, `DFM PROPERTY`, `NET AREA RATIO`, etc. |
+| `IfExpr` | `condition`, `then_body`, `elseifs`, `else_body` | IF/ELSE inside property blocks |
+| `PropertyBlock` | `properties`, `body` | `[ PROPERTY ... ]` |
 
 ## Supported SVRF Syntax
 
 - **Preprocessor**: `#DEFINE`, `#IFDEF`, `#IFNDEF`, `#ELSE`, `#ENDIF`, `#INCLUDE`, `#ENCRYPT`/`#ENDCRYPT`
-- **Layer operations**: `LAYER`, `LAYER MAP`, layer assignment (`=`)
-- **Boolean / spatial operators**: `AND`, `OR`, `NOT`, `INSIDE`, `OUTSIDE`, `INTERACT`, `TOUCH`, `ENCLOSE`, `IN EDGE`, `COIN EDGE`, `WITH`
-- **DRC operations**: `INT`, `EXT`, `ENC`, `DENSITY`, `SIZE`, `AREA`, `ANGLE`, `LENGTH`, `CONVEX EDGE`, `EXPAND EDGE`, `RECTANGLE`, `EXTENT`, `STAMP`
+- **Layer operations**: `LAYER`, `LAYER MAP` (DATATYPE/TEXTTYPE), layer assignment (`=`)
+- **Boolean operators**: `AND`, `OR`, `NOT`, `XOR` (infix and prefix forms)
+- **Spatial operators**: `INSIDE`, `OUTSIDE`, `OUT`, `INTERACT`, `TOUCH`, `ENCLOSE`, `CUT`, `STAMP`, `IN`
+- **Compound operators**: `INSIDE EDGE`, `OUTSIDE EDGE`, `COIN EDGE`, `IN EDGE`, `OR EDGE`, `TOUCH EDGE`, `TOUCH INSIDE EDGE`, `TOUCH OUTSIDE EDGE`, `NOT TOUCH`, `NOT IN`, `NOT OUT`, `INSIDE OF LAYER`
+- **DRC operations**: `INT`, `EXT`, `ENC`, `DENSITY`, `OFFGRID`, `ROTATE`
+- **Geometry operations**: `SIZE`, `GROW`, `SHRINK`, `SHIFT`, `EXPAND EDGE`, `CONVEX EDGE`, `RECTANGLE`, `RECTANGLE ENCLOSURE`, `RECTANGLES`, `EXTENT`, `EXTENTS`
+- **Measurement**: `AREA`, `LENGTH`, `ANGLE`, `VERTEX`, `NET AREA RATIO`
+- **DFM**: `DFM PROPERTY`, `DFM PROPERTY NET`, `DFM DP`, `DFM RDB`
+- **WITH sub-expressions**: `WITH WIDTH`, `WITH EDGE`, `WITH TEXT`, `WITH NEIGHBOR`
 - **Connectivity**: `CONNECT`, `SCONNECT`
-- **Devices**: `DEVICE` (MOSFET, DIODE, CAP, RES, etc.)
+- **Devices**: `DEVICE` (MOSFET, DIODE, CAP, RES, BJT, etc.), `DEVICE LAYER`
 - **Macros**: `DMACRO` definitions with property blocks
-- **Directives**: `LAYOUT`, `SOURCE`, `DRC`, `LVS`, `ERC`, `PEX`, `PRECISION`, `RESOLUTION`, `TITLE`, `TEXT`, `PORT`, `VIRTUAL`, `FLAG`, `UNIT`, `MASK`, etc.
-- **Other**: `GROUP`, `ATTACH`, `TRACE PROPERTY`, rule check blocks, comments (`//`, `/* */`)
+- **Directives**: `LAYOUT`, `SOURCE`, `DRC`, `LVS`, `ERC`, `PEX`, `PRECISION`, `RESOLUTION`, `TITLE`, `TEXT`, `PORT`, `VIRTUAL`, `FLAG`, `UNIT`, `MASK`, `HCELL`, `RDB`, etc.
+- **Control flow**: `IF`/`ELSE`/`ELSE IF` in property blocks and rule check blocks
+- **Other**: `GROUP`, `ATTACH`, `TRACE PROPERTY`, rule check blocks (with `{` on same or next line), comments (`//`, `/* */`)
+
+## Architecture
+
+The parser uses a two-pass approach:
+
+1. **Prescan** (`_prescan`): Scans the token stream to build a symbol table of known layer names (from `LAYER` definitions, layer assignments, rule check block names). This resolves the fundamental SVRF ambiguity where any identifier could be either a keyword or a layer name.
+
+2. **Parse**: Recursive descent for statements, Pratt parsing for expressions. The symbol table from pass 1 guides disambiguation — identifiers in the symbol table are treated as layer references even when they match SVRF keywords.
 
 ## Requirements
 
 - Python 3.6+
 - No third-party dependencies
+- pytest (for running tests)
