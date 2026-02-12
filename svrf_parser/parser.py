@@ -68,7 +68,7 @@ _DRC_MODIFIERS = frozenset({
     'DRAWN', 'ORIGINAL', 'INSIDE', 'OUTSIDE',
     'CONNECTED', 'WINDOW', 'STEP', 'BACKUP',
     'RDB', 'PRINT', 'POLYGON', 'EMPTY', 'INNER',
-    'CORNER', 'ACUTE', 'OBTUSE', 'CONVEX',
+    'CORNER', 'ACUTE', 'OBTUSE', 'CONVEX', 'BEVEL',
     'RECTANGLE', 'SQUARE', 'ORTHOGONAL',
     'CENTERS', 'ALSO', 'ONLY', 'COUNT',
     'PERIMETER', 'HIER', 'CELL',
@@ -287,6 +287,8 @@ class Parser:
             return self._parse_ifdef()
         if tt == TT.PP_INCLUDE:
             return self._parse_include()
+        if tt == TT.PP_UNDEFINE:
+            return self._parse_undefine()
         if tt in (TT.PP_ENCRYPT, TT.PP_DECRYPT):
             return self._parse_encrypted()
         if tt == TT.PP_ELSE:
@@ -315,6 +317,21 @@ class Parser:
             self._advance()
             return None
 
+        # Stray ] from property blocks split across #IFDEF/#ENDIF
+        if tt == TT.RBRACKET:
+            self._advance()
+            return None
+
+        # Stray ) from multiline expressions
+        if tt == TT.RPAREN:
+            self._advance()
+            return None
+
+        # Stray , from property block continuation lines split across #IFDEF
+        if tt == TT.COMMA:
+            self._advance()
+            return None
+
         # Identifier-based dispatch
         if tt == TT.IDENT:
             return self._dispatch_ident()
@@ -332,6 +349,8 @@ class Parser:
                 # digit-name = => assignment
                 if nxt2 and nxt2.type == TT.EQUALS:
                     return self._parse_assignment()
+                # digit-name as bare expression (e.g. 18_15V_GATE NOT OD18)
+                return self._parse_bare_expression()
 
         # @ description line (inside rule check blocks)
         if tt == TT.AT:
@@ -341,9 +360,9 @@ class Parser:
         if tt == TT.LBRACKET:
             return self._parse_property_block()
 
-        # Parenthesized expression inside block bodies:
-        # e.g. (NW INTERACT NWDMY) AND TrGATE
-        if tt == TT.LPAREN and self._block_depth > 0:
+        # Parenthesized expression: e.g. (NW INTERACT NWDMY) AND TrGATE
+        # or standalone (EXT ...) / (INT ...) at any level
+        if tt == TT.LPAREN:
             return self._parse_bare_expression()
 
         # Skip unknown tokens
@@ -419,6 +438,18 @@ class Parser:
         if upper == 'IF':
             return self._parse_if_expr()
 
+        # Standalone CMACRO invocation: CMACRO name arg1 arg2 ...
+        if upper == 'CMACRO':
+            return self._parse_cmacro_invocation()
+
+        # DISCONNECT layer1 layer2 ...
+        if upper == 'DISCONNECT':
+            return self._parse_directive()
+
+        # POLYGON statement: POLYGON x1 y1 x2 y2 name
+        if upper == 'POLYGON':
+            return self._parse_polygon()
+
         # Bare expression (DRC operations inside rule check blocks, or
         # unrecognized top-level statements).  Only warn at the top level –
         # inside { } blocks bare expressions are expected SVRF constructs.
@@ -446,6 +477,53 @@ class Parser:
         value = ' '.join(parts) if parts else None
         self._consume_eol()
         return ast.Define(name=name, value=value, **loc)
+
+    def _parse_undefine(self):
+        loc = self._loc()
+        self._advance()  # #UNDEFINE
+        name = ''
+        if self._at(TT.IDENT):
+            name = self._advance().value
+        self._skip_to_eol()
+        self._consume_eol()
+        return ast.Directive(keywords=['#UNDEFINE'], arguments=[name], **loc)
+
+    def _parse_cmacro_invocation(self):
+        """Parse standalone CMACRO invocation: CMACRO name arg1 arg2 ..."""
+        loc = self._loc()
+        self._advance()  # CMACRO
+        keywords = ['CMACRO']
+        args = []
+        while not self._at_eol():
+            t = self._cur()
+            if t.type == TT.IDENT:
+                args.append(self._advance().value)
+            elif t.type in (TT.INTEGER, TT.FLOAT):
+                args.append(str(self._advance().value))
+            elif t.type == TT.STRING:
+                args.append(self._advance().value)
+            else:
+                self._advance()
+        self._consume_eol()
+        return ast.Directive(keywords=keywords, arguments=args, **loc)
+
+    def _parse_polygon(self):
+        """Parse POLYGON statement: POLYGON x1 y1 x2 y2 name"""
+        loc = self._loc()
+        self._advance()  # POLYGON
+        args = []
+        while not self._at_eol():
+            t = self._cur()
+            if t.type == TT.IDENT:
+                args.append(self._advance().value)
+            elif t.type in (TT.INTEGER, TT.FLOAT):
+                args.append(str(self._advance().value))
+            elif t.type == TT.STRING:
+                args.append(self._advance().value)
+            else:
+                self._advance()
+        self._consume_eol()
+        return ast.Directive(keywords=['POLYGON'], arguments=args, **loc)
 
     def _parse_ifdef(self):
         loc = self._loc()
@@ -611,7 +689,14 @@ class Parser:
         elif self._at(TT.INTEGER) and self._peek().type == TT.IDENT:
             # Handle names starting with digits (e.g. 2xmn_DN_6_WINDOW)
             name = str(self._advance().value) + self._advance().value
-        expr = self._parse_line_expression()
+        # Consume multiple string values: VARIABLE POWER_NAME "?VDD?" "?VCC?"
+        if self._at(TT.STRING):
+            parts = []
+            while self._at(TT.STRING) and not self._at_eol():
+                parts.append(self._advance().value)
+            expr = ast.StringLiteral(value=' '.join(parts), **self._loc()) if parts else None
+        else:
+            expr = self._parse_line_expression()
         self._consume_eol()
         return ast.VariableDef(name=name, expr=expr, **loc)
 
@@ -1162,6 +1247,8 @@ class Parser:
 
     def _arith_led_bp(self):
         t = self._cur()
+        if t.type == TT.QUESTION:
+            return 1  # ternary has lowest precedence
         if t.type in (TT.EQEQ, TT.BANGEQ, TT.LT, TT.GT_OP, TT.LE, TT.GE):
             return 5
         if t.type in (TT.PLUS, TT.MINUS):
@@ -1179,6 +1266,21 @@ class Parser:
     def _arith_led(self, left, nbp):
         t = self._cur()
         loc = self._loc()
+        # Ternary: cond ? then_expr : else_expr
+        if t.type == TT.QUESTION:
+            self._advance()  # ?
+            self._skip_newlines()
+            then_expr = self._parse_arith_expr(0)
+            self._skip_newlines()
+            if self._at(TT.COLON):
+                self._advance()  # :
+            self._skip_newlines()
+            else_expr = self._parse_arith_expr(0)
+            return ast.BinaryOp(op='?:', left=left,
+                                right=ast.BinaryOp(op=':',
+                                                   left=then_expr,
+                                                   right=else_expr,
+                                                   **loc), **loc)
         op = self._advance().value
         right = self._parse_arith_expr(nbp)
         return ast.BinaryOp(op=op, left=left, right=right, **loc)
@@ -1275,6 +1377,14 @@ class Parser:
             expr = self._parse_layer_expr(0)
             if self._at(TT.RPAREN):
                 self._advance()
+            elif self._at(TT.NEWLINE):
+                # Try skipping newlines to find ) on next line (e.g. OR\n...\n))
+                saved = self.pos
+                self._skip_newlines()
+                if self._at(TT.RPAREN):
+                    self._advance()
+                else:
+                    self.pos = saved
             return expr
 
         if t.type == TT.LBRACKET:
@@ -1323,6 +1433,10 @@ class Parser:
             return self._parse_unary_constrained_op()
         if upper == 'ANGLE':
             return self._parse_angle_op()
+        if upper == 'PATH' and self._peek().type == TT.IDENT and \
+                self._peek().value.upper() == 'LENGTH':
+            self._advance()  # PATH
+            return self._parse_length_op(op_name='PATH LENGTH')
         if upper == 'LENGTH':
             return self._parse_length_op()
         if upper == 'CONVEX' and self._peek().type == TT.IDENT and \
@@ -1459,6 +1573,20 @@ class Parser:
                         self._consume_eol()
                         self._skip_newlines()
                         if self._can_start_layer_expr() and not self._at(TT.RBRACE):
+                            # Don't consume next line if it starts a new statement
+                            if self._at(TT.IDENT):
+                                nxt_t = self._peek().type
+                                if nxt_t == TT.EQUALS or nxt_t == TT.LBRACE:
+                                    self.pos = saved
+                                    break
+                            # Digit-prefix assignment: INTEGER IDENT EQUALS
+                            if self._at(TT.INTEGER):
+                                nxt_t = self._peek()
+                                if nxt_t.type == TT.IDENT:
+                                    nxt2 = self._peek(2)
+                                    if nxt2.type == TT.EQUALS:
+                                        self.pos = saved
+                                        break
                             continue  # more operands on next line
                         self.pos = saved
                     break
@@ -1592,23 +1720,37 @@ class Parser:
                 if nxt_u == 'EDGE':
                     self._advance()  # TOUCH
                     self._advance()  # EDGE
-                    operand = self._parse_layer_expr(50)
-                    return ast.UnaryOp(op='TOUCH EDGE', operand=operand, **loc)
+                    left_op = self._parse_layer_expr(50)
+                    if self._can_start_layer_expr() and not self._at_eol():
+                        right_op = self._parse_layer_expr(50)
+                        return ast.BinaryOp(op='TOUCH EDGE', left=left_op,
+                                            right=right_op, **loc)
+                    return ast.UnaryOp(op='TOUCH EDGE', operand=left_op, **loc)
                 if nxt_u in ('INSIDE', 'OUTSIDE'):
                     nxt2 = self._peek(2)
                     if nxt2 and nxt2.type == TT.IDENT and nxt2.value.upper() == 'EDGE':
                         self._advance()  # TOUCH
                         middle = self._advance().value.upper()  # INSIDE/OUTSIDE
                         self._advance()  # EDGE
-                        operand = self._parse_layer_expr(50)
-                        return ast.UnaryOp(op='TOUCH ' + middle + ' EDGE', operand=operand, **loc)
+                        left_op = self._parse_layer_expr(50)
+                        if self._can_start_layer_expr() and not self._at_eol():
+                            right_op = self._parse_layer_expr(50)
+                            return ast.BinaryOp(op='TOUCH ' + middle + ' EDGE',
+                                                left=left_op, right=right_op, **loc)
+                        return ast.UnaryOp(op='TOUCH ' + middle + ' EDGE',
+                                           operand=left_op, **loc)
         if upper in ('INSIDE', 'OUTSIDE'):
             nxt = self._peek()
             if nxt.type == TT.IDENT and nxt.value.upper() == 'EDGE':
                 self._advance()  # INSIDE/OUTSIDE
                 self._advance()  # EDGE
-                operand = self._parse_layer_expr(50)
-                return ast.UnaryOp(op=upper + ' EDGE', operand=operand, **loc)
+                left_op = self._parse_layer_expr(50)
+                # INSIDE EDGE / OUTSIDE EDGE takes two operands
+                if self._can_start_layer_expr() and not self._at_eol():
+                    right_op = self._parse_layer_expr(50)
+                    return ast.BinaryOp(op=upper + ' EDGE', left=left_op,
+                                        right=right_op, **loc)
+                return ast.UnaryOp(op=upper + ' EDGE', operand=left_op, **loc)
             # INSIDE CELL / OUTSIDE CELL: DRC op with cell name + pattern args
             if nxt.type == TT.IDENT and nxt.value.upper() == 'CELL':
                 self._advance()  # INSIDE/OUTSIDE
@@ -1641,6 +1783,30 @@ class Parser:
             # Parse as DRC op: WITH sub-op operand [constraints] [modifiers]
             return self._parse_with_prefix_op()
 
+        # PATHCHK: consumes !NET && !NET NOFLOAT etc.
+        if upper == 'PATHCHK':
+            self._advance()  # PATHCHK
+            modifiers = []
+            while not self._at_eol():
+                t_cur = self._cur()
+                if t_cur.type == TT.BANG:
+                    self._advance()
+                    if self._at(TT.IDENT):
+                        modifiers.append('!' + self._advance().value)
+                    else:
+                        modifiers.append('!')
+                elif t_cur.type == TT.AMPAMP:
+                    self._advance()
+                    modifiers.append('&&')
+                elif t_cur.type == TT.IDENT:
+                    modifiers.append(self._advance().value)
+                elif t_cur.type == TT.STRING:
+                    modifiers.append(self._advance().value)
+                else:
+                    break
+            return ast.DRCOp(op='PATHCHK', operands=[],
+                             constraints=[], modifiers=modifiers, **loc)
+
         if upper == 'DRAWN':
             self._advance()
             keywords = ['DRAWN']
@@ -1669,6 +1835,10 @@ class Parser:
             return 0
         if t.type in (TT.RBRACE, TT.RBRACKET, TT.RPAREN):
             return 0
+        if t.type == TT.QUESTION:
+            return 1  # ternary has lowest precedence
+        if t.type == TT.COLON:
+            return 0  # colon terminates the then-branch of ternary
         if t.type in (TT.LT, TT.GT_OP, TT.LE, TT.GE, TT.EQEQ, TT.BANGEQ):
             return 5
         if t.type == TT.IDENT:
@@ -1702,12 +1872,21 @@ class Parser:
                 return 50
             if upper == 'NET':
                 return 5  # NET INTERACT / NET AREA RATIO as infix
-            if upper in ('ANGLE', 'LENGTH', 'AREA'):
+            if upper in ('ANGLE', 'LENGTH', 'AREA', 'VERTEX'):
                 # Check if followed by constraint (e.g. layer ANGLE == 45)
                 nxt = self._peek()
                 if nxt.type in (TT.LT, TT.GT_OP, TT.LE, TT.GE, TT.EQEQ, TT.BANGEQ):
                     return 5
                 return 0
+            # CONVEX EDGE as infix: layer CONVEX EDGE == 2
+            if upper == 'CONVEX':
+                nxt = self._peek()
+                if nxt.type == TT.IDENT and nxt.value.upper() == 'EDGE':
+                    return 5
+                return 0
+            # CONNECTED as postfix modifier (e.g. layer1 AND layer2 CONNECTED)
+            if upper == 'CONNECTED':
+                return 5
             # RECTANGLE as postfix DRC op (e.g. layer RECTANGLE == val BY == val)
             # Also fires for modifier-only: layer RECTANGLE ORTHOGONAL ONLY
             if upper == 'RECTANGLE':
@@ -1750,6 +1929,22 @@ class Parser:
     def _layer_led(self, left):
         t = self._cur()
         loc = self._loc()
+
+        # Ternary: cond ? then_expr : else_expr
+        if t.type == TT.QUESTION:
+            self._advance()  # ?
+            self._skip_newlines()
+            then_expr = self._parse_layer_expr(0)
+            self._skip_newlines()
+            if self._at(TT.COLON):
+                self._advance()  # :
+            self._skip_newlines()
+            else_expr = self._parse_layer_expr(0)
+            return ast.BinaryOp(op='?:', left=left,
+                                right=ast.BinaryOp(op=':',
+                                                   left=then_expr,
+                                                   right=else_expr,
+                                                   **loc), **loc)
 
         # Comparison operators -> constraints + optional trailing modifiers
         if t.type in (TT.LT, TT.GT_OP, TT.LE, TT.GE, TT.EQEQ, TT.BANGEQ):
@@ -1846,8 +2041,8 @@ class Parser:
                 return ast.DRCOp(op=upper, operands=[left],
                                  constraints=[], modifiers=modifiers, **loc)
 
-            # ANGLE/LENGTH/AREA as infix measurement: layer ANGLE == 45
-            if upper in ('ANGLE', 'LENGTH', 'AREA'):
+            # ANGLE/LENGTH/AREA/VERTEX as infix measurement: layer ANGLE == 45
+            if upper in ('ANGLE', 'LENGTH', 'AREA', 'VERTEX'):
                 self._advance()  # ANGLE/LENGTH/AREA
                 constraints = []
                 if self._cur().type in (TT.LT, TT.GT_OP, TT.LE, TT.GE,
@@ -1864,6 +2059,53 @@ class Parser:
                         break
                 return ast.DRCOp(op=upper, operands=[left],
                                  constraints=constraints, modifiers=modifiers, **loc)
+
+            # CONVEX EDGE as infix: layer CONVEX EDGE == 2
+            if upper == 'CONVEX':
+                self._advance()  # CONVEX
+                if self._at_val('EDGE'):
+                    self._advance()  # EDGE
+                operands = [left]
+                # Consume optional modifiers like ANGLE1, ANGLE2, WITH LENGTH
+                modifiers = []
+                constraints = []
+                while not self._at_eol() and not self._at(TT.RPAREN):
+                    if self._at(TT.IDENT):
+                        mod_u = self._cur().value.upper()
+                        if mod_u in ('ANGLE1', 'ANGLE2'):
+                            modifiers.append(self._advance().value)
+                            if self._cur().type in (TT.LT, TT.GT_OP, TT.LE, TT.GE,
+                                                    TT.EQEQ, TT.BANGEQ):
+                                constraints.extend(self._parse_constraints())
+                        elif mod_u == 'WITH':
+                            # WITH LENGTH <= val etc.
+                            modifiers.append(self._advance().value)
+                            while not self._at_eol() and not self._at(TT.RPAREN):
+                                if self._at(TT.IDENT):
+                                    modifiers.append(self._advance().value)
+                                elif self._cur().type in (TT.LT, TT.GT_OP, TT.LE, TT.GE,
+                                                          TT.EQEQ, TT.BANGEQ):
+                                    constraints.extend(self._parse_constraints())
+                                    break
+                                else:
+                                    break
+                        elif mod_u in _DRC_MODIFIERS:
+                            modifiers.append(self._advance().value)
+                        else:
+                            break
+                    elif self._cur().type in (TT.LT, TT.GT_OP, TT.LE, TT.GE,
+                                              TT.EQEQ, TT.BANGEQ):
+                        constraints.extend(self._parse_constraints())
+                    else:
+                        break
+                return ast.DRCOp(op='CONVEX EDGE', operands=operands,
+                                 constraints=constraints, modifiers=modifiers, **loc)
+
+            # CONNECTED as postfix modifier: layer1 AND layer2 CONNECTED
+            if upper == 'CONNECTED':
+                self._advance()  # CONNECTED
+                return ast.DRCOp(op='CONNECTED', operands=[left],
+                                 constraints=[], modifiers=[], **loc)
 
             # RECTANGLE as postfix: layer RECTANGLE == val BY == val
             if upper == 'RECTANGLE':
@@ -2061,6 +2303,14 @@ class Parser:
                 right = self._parse_layer_expr(bp)
                 result = ast.BinaryOp(op=upper, left=left,
                                     right=right, **loc)
+                # Infix OR/AND: chain additional operands on the same line
+                # e.g. A OR B C D → OR(OR(OR(A,B),C),D)
+                if upper in ('OR', 'AND'):
+                    while not self._at_eol() and not self._at(TT.RPAREN) and \
+                            not self._at(TT.RBRACKET) and self._can_start_layer_expr():
+                        extra = self._parse_layer_expr(bp)
+                        result = ast.BinaryOp(op=upper, left=result,
+                                            right=extra, **loc)
                 # Spatial ops can have trailing constraints + modifiers
                 if upper in ('INTERACT', 'INSIDE', 'OUTSIDE', 'OUT',
                              'ENCLOSE', 'TOUCH', 'CUT'):
@@ -2307,6 +2557,39 @@ class Parser:
                 continue
             break
 
+        # DFM COPY multiline continuation: operand lists can span lines
+        # Pattern: DFM COPY\n  (EXT ...)\n  (INT ...)\n  layerRef\n  ...
+        if sub_op == 'COPY':
+            while self._at_eol():
+                saved = self.pos
+                self._consume_eol()
+                self._skip_newlines()
+                t = self._cur()
+                # Parenthesized expression on next line
+                if t.type == TT.LPAREN:
+                    self._advance()  # (
+                    expr = self._parse_layer_expr(0)
+                    if self._at(TT.RPAREN):
+                        self._advance()
+                    operands.append(expr)
+                    continue
+                # Bare layer ref on next line (not a new statement)
+                if t.type == TT.IDENT:
+                    nxt_t = self._peek().type
+                    # Stop if it looks like a new statement
+                    if nxt_t == TT.EQUALS or nxt_t == TT.LBRACE:
+                        self.pos = saved
+                        break
+                    if t.value.upper() in _DIRECTIVE_HEADS or t.value.upper() in _SVRF_KEYWORDS:
+                        self.pos = saved
+                        break
+                    operands.append(ast.LayerRef(name=self._advance().value,
+                                                 **self._loc()))
+                    continue
+                # Anything else — not a continuation
+                self.pos = saved
+                break
+
         # DFM PROPERTY multiline continuation: operand lists can span lines
         if sub_op == 'PROPERTY':
             _dfm_mod_stop = frozenset({
@@ -2409,6 +2692,11 @@ class Parser:
                 if upper in ('UNDEROVER', 'OVERUNDER', 'INSIDE', 'OUTSIDE',
                              'GROW', 'SHRINK'):
                     modifiers.append(self._advance().value)
+                elif upper in ('BEVEL', 'CORNER', 'ACUTE', 'OBTUSE', 'CONVEX'):
+                    modifiers.append(self._advance().value)
+                    # These modifiers can take a numeric argument
+                    if not self._at_eol() and self._at(TT.INTEGER):
+                        modifiers.append(self._advance().value)
                 elif upper in ('OF', 'STEP', 'LAYER', 'TRUNCATE'):
                     modifiers.append(self._advance().value)
                     # Consume the following value/layer as expression
@@ -2472,15 +2760,15 @@ class Parser:
     # ------------------------------------------------------------------
     # LENGTH operation (prefix)
     # ------------------------------------------------------------------
-    def _parse_length_op(self):
+    def _parse_length_op(self, op_name='LENGTH'):
         loc = self._loc()
-        self._advance()  # LENGTH
+        self._advance()  # LENGTH (or second word of PATH LENGTH)
         operand = self._parse_layer_expr(50)
         constraints = []
         if self._cur().type in (TT.LT, TT.GT_OP, TT.LE, TT.GE, TT.EQEQ, TT.BANGEQ):
             constraints = self._parse_constraints()
         return ast.ConstrainedExpr(
-            expr=ast.UnaryOp(op='LENGTH', operand=operand, **loc),
+            expr=ast.UnaryOp(op=op_name, operand=operand, **loc),
             constraints=constraints, **loc)
 
     # ------------------------------------------------------------------
@@ -2529,7 +2817,7 @@ class Parser:
         while not self._at_eol():
             if self._at(TT.IDENT):
                 upper_cur = self._cur().value.upper()
-                if upper_cur in ('INSIDE', 'OUTSIDE'):
+                if upper_cur in ('INSIDE', 'OUTSIDE', 'IN', 'OUT'):
                     modifiers.append(self._advance().value)
                     if self._at_val('BY'):
                         modifiers.append(self._advance().value)
@@ -2552,6 +2840,9 @@ class Parser:
     def _parse_offgrid_op(self):
         loc = self._loc()
         self._advance()  # OFFGRID
+        # Check for DIRECTIONAL variant
+        if self._at(TT.IDENT) and self._cur().value.upper() == 'DIRECTIONAL':
+            self._advance()  # DIRECTIONAL
         operands = []
         # Collect operands (layer refs and parenthesized expressions)
         # Use bp=50 to prevent INSIDE/OUTSIDE from being consumed as binary ops
@@ -2568,6 +2859,34 @@ class Parser:
                 break
         modifiers = []
         self._parse_drc_modifiers(modifiers)
+        # Multiline continuation for TOP/BOTTOM/LEFT/RIGHT direction lines
+        # Pattern: TOP 0.041+DRCGRID 0.120 FACE
+        while self._at_eol() and self._block_depth > 0:
+            saved = self.pos
+            self._consume_eol()
+            self._skip_newlines()
+            if self._at(TT.IDENT) and self._cur().value.upper() in (
+                    'TOP', 'BOTTOM', 'LEFT', 'RIGHT'):
+                modifiers.append(self._advance().value)
+                # Consume values on this line (expr expr FACE/NOFACE)
+                while not self._at_eol():
+                    if self._at(TT.IDENT):
+                        mod_u = self._cur().value.upper()
+                        if mod_u in ('FACE', 'NOFACE', 'DRCGRID'):
+                            modifiers.append(self._advance().value)
+                        else:
+                            break
+                    elif self._at(TT.INTEGER) or self._at(TT.FLOAT):
+                        modifiers.append(self._parse_layer_expr(35))
+                    elif self._at(TT.PLUS) or self._at(TT.MINUS):
+                        modifiers.append(self._parse_layer_expr(35))
+                    elif self._at(TT.LPAREN):
+                        modifiers.append(self._parse_layer_expr(35))
+                    else:
+                        break
+                continue
+            self.pos = saved
+            break
         return ast.DRCOp(op='OFFGRID', operands=operands,
                          constraints=[], modifiers=modifiers, **loc)
 
@@ -2719,7 +3038,7 @@ class Parser:
                          constraints=[], modifiers=modifiers, **loc)
 
     # ------------------------------------------------------------------
-    # EXTENT [DRAWN] [ORIGINAL]
+    # EXTENT [DRAWN] [ORIGINAL] [CELL cellname ...]
     # ------------------------------------------------------------------
     def _parse_extent_op(self):
         loc = self._loc()
@@ -2729,6 +3048,11 @@ class Parser:
             upper = self._cur().value.upper()
             if upper in ('DRAWN', 'ORIGINAL'):
                 modifiers.append(self._advance().value)
+            elif upper == 'CELL':
+                modifiers.append(self._advance().value)
+                # CELL takes a cell name argument
+                if self._at(TT.IDENT) and not self._at_eol():
+                    modifiers.append(self._advance().value)
             else:
                 break
         # Consume remaining operands (layer names)
@@ -2754,6 +3078,13 @@ class Parser:
                     modifiers.append(self._advance().value)
                     if not self._at_eol():
                         modifiers.append(self._parse_layer_expr(35))
+            elif upper in ('SEQUENTIAL', 'CLIP', 'TRUNCATE', 'BEVEL',
+                           'CORNER', 'INSIDE', 'OUTSIDE', 'OVERUNDER',
+                           'UNDEROVER'):
+                modifiers.append(self._advance().value)
+                # Some trailing modifiers take a numeric argument
+                if not self._at_eol() and (self._at(TT.INTEGER) or self._at(TT.FLOAT)):
+                    modifiers.append(self._advance().value)
             else:
                 break
         return ast.DRCOp(op=op, operands=[operand],

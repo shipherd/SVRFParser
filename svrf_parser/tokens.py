@@ -20,6 +20,7 @@ class TokenType(Enum):
     PP_ENCRYPT = auto()
     PP_ENDCRYPT = auto()
     PP_DECRYPT = auto()
+    PP_UNDEFINE = auto()
 
     # Operators
     EQUALS = auto()       # =
@@ -39,6 +40,8 @@ class TokenType(Enum):
     CARET = auto()         # ^
     PERCENT = auto()       # %
     COLONCOLON = auto()    # ::
+    QUESTION = auto()      # ?
+    COLON = auto()         # :
 
     # Delimiters
     LPAREN = auto()        # (

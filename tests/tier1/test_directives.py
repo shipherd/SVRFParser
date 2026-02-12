@@ -4,7 +4,7 @@ import sys
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
-from tests.helpers import parse_one, assert_node_type
+from tests.helpers import parse_one, parse_expr, assert_node_type, collect_warnings
 from svrf_parser.ast_nodes import *
 
 
@@ -58,3 +58,38 @@ class TestRdbDirective:
         node = parse_one('RDB "./output/report.RDB" M1 GATE')
         assert_node_type(node, Directive)
         assert "RDB" in [k.upper() for k in node.keywords]
+
+
+class TestCmacroInvocation:
+    def test_cmacro_basic(self):
+        node = parse_one("CMACRO VOLTAGE_ANNOTATE_2 LAYER1 NET_PROP LAYER1_v")
+        assert_node_type(node, Directive)
+        assert node.keywords == ['CMACRO']
+        assert node.arguments == ['VOLTAGE_ANNOTATE_2', 'LAYER1', 'NET_PROP', 'LAYER1_v']
+
+    def test_cmacro_no_warnings(self):
+        warnings = collect_warnings("CMACRO MY_MACRO ARG1 ARG2")
+        assert len(warnings) == 0
+
+    def test_cmacro_single_arg(self):
+        node = parse_one("CMACRO extract_params")
+        assert_node_type(node, Directive)
+        assert node.keywords == ['CMACRO']
+        assert node.arguments == ['extract_params']
+
+
+class TestPolygon:
+    def test_polygon_basic(self):
+        node = parse_one("POLYGON xLB yLB xRT yRT ChipWindow")
+        assert_node_type(node, Directive)
+        assert node.keywords == ['POLYGON']
+        assert node.arguments == ['xLB', 'yLB', 'xRT', 'yRT', 'ChipWindow']
+
+    def test_polygon_no_warnings(self):
+        warnings = collect_warnings("POLYGON x1 y1 x2 y2 region")
+        assert len(warnings) == 0
+
+    def test_polygon_with_numbers(self):
+        node = parse_one("POLYGON 0 0 100 200 MyRegion")
+        assert_node_type(node, Directive)
+        assert node.keywords == ['POLYGON']

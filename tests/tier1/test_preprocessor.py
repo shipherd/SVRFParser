@@ -56,6 +56,26 @@ class TestInclude:
         assert_node_type(node, Include, path="path.svrf")
 
 
+class TestUndefine:
+    def test_undefine_simple(self):
+        node = parse_one("#UNDEFINE FOO")
+        assert_node_type(node, Directive)
+        assert node.keywords == ['#UNDEFINE']
+        assert node.arguments == ['FOO']
+
+    def test_undefine_no_warnings(self):
+        warnings = collect_warnings("#UNDEFINE MY_MACRO")
+        assert len(warnings) == 0
+
+    def test_undefine_inside_ifdef(self):
+        text = "#IFDEF FOO\n#UNDEFINE BAR\n#ENDIF"
+        node = parse_one(text)
+        assert_node_type(node, IfDef)
+        assert len(node.then_body) == 1
+        assert_node_type(node.then_body[0], Directive)
+        assert node.then_body[0].keywords == ['#UNDEFINE']
+
+
 class TestEncrypted:
     def test_encrypted_block(self):
         text = "#ENCRYPT\nsome encrypted content\n#ENDCRYPT"
