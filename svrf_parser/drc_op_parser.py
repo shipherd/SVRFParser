@@ -19,6 +19,18 @@ class DRCOpMixin:
         """Consume DRC modifiers (greedy until EOL) and append to list."""
         while not self._at_eol():
             t = self._cur()
+            # ABUT<angle> or ABUT>angle<angle> — consume as single modifier string
+            if t.type == TT.IDENT and t.value.upper() == 'ABUT':
+                abut_str = self._advance().value.upper()  # ABUT
+                # Check for <angle> or >angle<angle>
+                if not self._at_eol() and self._cur().type in (TT.LT, TT.GT_OP):
+                    while not self._at_eol() and self._cur().type in (
+                            TT.LT, TT.GT_OP, TT.INTEGER, TT.FLOAT):
+                        abut_str += str(self._advance().value)
+                    modifiers.append(abut_str)
+                else:
+                    modifiers.append(abut_str)
+                continue
             if t.type == TT.IDENT:
                 modifiers.append(self._advance().value)
             elif t.type in (TT.INTEGER, TT.FLOAT):

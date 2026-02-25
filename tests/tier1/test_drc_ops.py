@@ -107,3 +107,22 @@ class TestRectangleConstraints:
         assert_node_type(node, DRCOp, op="RECTANGLE")
         mod_strs = [str(m) for m in node.modifiers]
         assert "ASPECT" in mod_strs
+
+
+class TestAbutAngle:
+    def test_abut_90(self):
+        node = parse_expr("INT M1 < 0.12 ABUT<90> SINGULAR REGION")
+        assert isinstance(node, DRCOp)
+        assert 'ABUT<90>' in node.modifiers
+        assert 'SINGULAR' in node.modifiers
+        assert 'REGION' in node.modifiers
+
+    def test_abut_range(self):
+        node = parse_expr("INT M1 < 0.12 ABUT>0<90>")
+        assert isinstance(node, DRCOp)
+        assert 'ABUT>0<90>' in node.modifiers
+
+    def test_abut_180(self):
+        node = parse_expr("INT M1 < 0.12 ABUT<180>")
+        assert isinstance(node, DRCOp)
+        assert 'ABUT<180>' in node.modifiers
