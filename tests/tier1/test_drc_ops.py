@@ -126,3 +126,17 @@ class TestAbutAngle:
         node = parse_expr("INT M1 < 0.12 ABUT<180>")
         assert isinstance(node, DRCOp)
         assert 'ABUT<180>' in node.modifiers
+
+
+class TestPerimeter:
+    def test_perimeter_prefix(self):
+        node = parse_expr("PERIMETER M1 > 5.0")
+        assert isinstance(node, ConstrainedExpr)
+        assert isinstance(node.expr, UnaryOp)
+        assert node.expr.op == "PERIMETER"
+        assert len(node.constraints) == 1
+
+    def test_perimeter_no_constraint(self):
+        node = parse_expr("PERIMETER M1")
+        assert isinstance(node, UnaryOp)
+        assert node.op == "PERIMETER"

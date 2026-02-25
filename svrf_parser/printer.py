@@ -234,19 +234,14 @@ class SvrfPrinter:
                 parts.append(self.emit(op))
         for c in node.constraints:
             parts.append(self.emit(c))
-        # For SIZE/SHIFT, insert BY before the first numeric modifier
-        mods = list(node.modifiers or [])
-        if node.op in ('SIZE', 'SHIFT') and mods:
-            first = mods[0]
-            if isinstance(first, (ast.NumberLiteral, ast.LayerRef,
-                                  ast.BinaryOp, ast.UnaryOp, ast.FuncCall)):
-                parts.append('BY')
-        for m in mods:
+        for m in (node.modifiers or []):
             parts.append(self._emit_modifier(m))
         return ' '.join(parts)
 
     def _emit_modifier(self, m):
-        """Emit a modifier which can be a string or an AST node."""
+        """Emit a modifier which can be a string, AST node, or ('BY', expr) tuple."""
+        if isinstance(m, tuple) and len(m) == 2 and m[0] == 'BY':
+            return 'BY ' + self.emit(m[1]) if isinstance(m[1], ast.AstNode) else f'BY {m[1]}'
         if isinstance(m, ast.AstNode):
             return self.emit(m)
         return str(m)

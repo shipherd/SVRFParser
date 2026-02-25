@@ -236,6 +236,7 @@ class ExpressionMixin:
         'SIZE': '_nud_size',
         'SHIFT': '_nud_size',
         'AREA': '_nud_area',
+        'PERIMETER': '_nud_area',
         'VERTEX': '_nud_vertex',
         'ANGLE': '_nud_angle',
         'LENGTH': '_nud_length',
@@ -425,15 +426,7 @@ class ExpressionMixin:
     def _nud_holes(self, t, loc):
         self._advance()
         operand = self._parse_layer_expr(50)
-        modifiers = []
-        while not self._at_eol() and self._at(TT.IDENT):
-            mod_u = self._cur().value.upper()
-            if mod_u in _DRC_MODIFIERS:
-                modifiers.append(self._advance().value)
-            else:
-                break
-        return ast.DRCOp(op='HOLES', operands=[operand],
-                         constraints=[], modifiers=modifiers, **self._loc())
+        return ast.UnaryOp(op='HOLES', operand=operand, **loc)
 
     def _nud_rotate(self, t, loc):
         self._advance()  # ROTATE
@@ -1193,7 +1186,7 @@ class ExpressionMixin:
         if self._at_val('BY'):
             self._advance()
             by_expr = self._parse_layer_expr(35)
-            modifiers.append(by_expr)
+            modifiers.append(('BY', by_expr))
         while not self._at_eol():
             if self._at(TT.IDENT):
                 mod_u = self._cur().value.upper()

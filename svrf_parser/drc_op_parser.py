@@ -368,7 +368,7 @@ class DRCOpMixin:
             # Parse the BY value as an expression to handle arithmetic
             # like SIZE BY 31.5/2 or SIZE BY (VIA0_W_1+VIA0_R_3_S2)*8+GRID
             by_expr = self._parse_layer_expr(35)
-            modifiers.append(by_expr)
+            modifiers.append(('BY', by_expr))
         # Optional modifiers: INSIDE OF layer, STEP value, UNDEROVER, etc.
         while not self._at_eol():
             if self._at(TT.IDENT):
@@ -406,14 +406,16 @@ class DRCOpMixin:
     # ------------------------------------------------------------------
     def _parse_area_op(self):
         loc = self._loc()
-        self._advance()  # AREA
+        op = self._advance().value.upper()  # AREA or PERIMETER
         operand = self._parse_layer_expr(50)
         constraints = []
         if self._cur().type in (TT.LT, TT.GT_OP, TT.LE, TT.GE, TT.EQEQ, TT.BANGEQ):
             constraints = self._parse_constraints()
-        return ast.ConstrainedExpr(
-            expr=ast.UnaryOp(op='AREA', operand=operand, **loc),
-            constraints=constraints, **loc)
+        if constraints:
+            return ast.ConstrainedExpr(
+                expr=ast.UnaryOp(op=op, operand=operand, **loc),
+                constraints=constraints, **loc)
+        return ast.UnaryOp(op=op, operand=operand, **loc)
 
     def _parse_unary_constrained_op(self):
         """Generic: OP operand [constraints] — e.g. VERTEX layer >= 8"""
