@@ -1268,6 +1268,21 @@ class ExpressionMixin:
             result = ast.BinaryOp(op=op_name, left=left,
                                 right=right, **loc)
             return self._maybe_trailing_modifiers(result, loc)
+        # NOT INSIDE / NOT INTERACT / NOT ENCLOSE / NOT CUT [EDGE] as compound binary ops
+        if upper == 'NOT' and self._at(TT.IDENT) and self._cur().value.upper() in (
+                'INSIDE', 'INTERACT', 'ENCLOSE', 'CUT'):
+            not_rhs = self._advance().value.upper()
+            op_name = 'NOT ' + not_rhs
+            # NOT INSIDE EDGE / NOT ENCLOSE EDGE etc.
+            if self._at(TT.IDENT) and self._cur().value.upper() == 'EDGE':
+                self._advance()
+                op_name += ' EDGE'
+            if self._at_eol() and self._block_depth > 0:
+                self._consume_eol()
+                self._skip_newlines()
+            right = self._parse_layer_expr(bp)
+            result = ast.BinaryOp(op=op_name, left=left, right=right, **loc)
+            return self._maybe_trailing_modifiers(result, loc)
         # NOT IN / NOT OUT / NOT OUTSIDE [EDGE] as compound binary ops
         if upper == 'NOT' and self._at(TT.IDENT) and self._cur().value.upper() in ('IN', 'OUT', 'OUTSIDE'):
             not_rhs = self._advance().value.upper()  # IN/OUT/OUTSIDE
