@@ -36,9 +36,8 @@ def _collect_samples():
 
 _ALL_SAMPLES = _collect_samples()
 _SAMPLE_IDS = [
-    os.path.relpath(str(f), str(SAMPLES_DIR)).replace("\\", "/")
-    for f in _ALL_SAMPLES
-]
+    f.name for f in _ALL_SAMPLES
+] if _ALL_SAMPLES else []
 
 
 @pytest.mark.skipif(not _ALL_SAMPLES, reason="No sample files found")
