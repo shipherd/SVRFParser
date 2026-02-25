@@ -1273,6 +1273,36 @@ class ExpressionMixin:
                 'INSIDE', 'INTERACT', 'ENCLOSE', 'CUT'):
             not_rhs = self._advance().value.upper()
             op_name = 'NOT ' + not_rhs
+            # NOT ENCLOSE RECTANGLE: compound DRC op (same pattern as ENCLOSE RECTANGLE)
+            if not_rhs == 'ENCLOSE' and self._at(TT.IDENT) and self._cur().value.upper() == 'RECTANGLE':
+                self._advance()  # RECTANGLE
+                operands = [left]
+                while not self._at_eol():
+                    t2 = self._cur()
+                    if t2.type in (TT.LT, TT.GT_OP, TT.LE, TT.GE, TT.EQEQ, TT.BANGEQ):
+                        break
+                    if t2.type == TT.IDENT and t2.value.upper() in _DRC_MODIFIERS:
+                        break
+                    if t2.type == TT.IDENT and t2.value.upper() in ('ASPECT', 'BY'):
+                        break
+                    if t2.type in (TT.IDENT, TT.INTEGER, TT.FLOAT, TT.LPAREN, TT.LBRACKET):
+                        operands.append(self._parse_layer_expr(35))
+                    else:
+                        break
+                constraints = []
+                if not self._at_eol() and self._cur().type in (TT.LT, TT.GT_OP, TT.LE, TT.GE, TT.EQEQ, TT.BANGEQ):
+                    constraints = self._parse_constraints()
+                modifiers = []
+                while not self._at_eol():
+                    t2 = self._cur()
+                    if t2.type == TT.IDENT:
+                        modifiers.append(self._advance().value)
+                    elif t2.type in (TT.INTEGER, TT.FLOAT):
+                        modifiers.append(str(self._advance().value))
+                    else:
+                        break
+                return ast.DRCOp(op='NOT ENCLOSE RECTANGLE', operands=operands,
+                                 constraints=constraints, modifiers=modifiers, **loc)
             # NOT INSIDE EDGE / NOT ENCLOSE EDGE etc.
             if self._at(TT.IDENT) and self._cur().value.upper() == 'EDGE':
                 self._advance()
