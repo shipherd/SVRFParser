@@ -37,14 +37,35 @@ class TestGrowShrink:
         assert_node_type(node, DRCOp, op="SHRINK")
 
 
-class TestMiscUnary:
-    def test_holes(self):
-        node = parse_expr("HOLES M1")
-        assert node.op in ("HOLES",) or isinstance(node, UnaryOp)
+class TestSizeByType:
+    def test_size_by_modifier_is_tuple(self):
+        """SIZE BY value should store ('BY', expr) tuple, not raw AST node."""
+        node = parse_expr("SIZE M1 BY 0.5")
+        assert isinstance(node, DRCOp)
+        assert node.op == "SIZE"
+        by_items = [m for m in node.modifiers if isinstance(m, tuple) and m[0] == 'BY']
+        assert len(by_items) == 1
+        assert isinstance(by_items[0][1], NumberLiteral)
 
-    def test_donut(self):
+    def test_size_by_with_overunder(self):
+        node = parse_expr("SIZE M1 BY 0.5 OVERUNDER")
+        assert isinstance(node, DRCOp)
+        by_items = [m for m in node.modifiers if isinstance(m, tuple) and m[0] == 'BY']
+        assert len(by_items) == 1
+        assert 'OVERUNDER' in [m for m in node.modifiers if isinstance(m, str)]
+
+
+class TestHolesDonutConsistency:
+    def test_holes_returns_unary_op(self):
+        """HOLES should return UnaryOp like DONUT does."""
+        node = parse_expr("HOLES M1")
+        assert isinstance(node, UnaryOp)
+        assert node.op == "HOLES"
+
+    def test_donut_returns_unary_op(self):
         node = parse_expr("DONUT M1")
-        assert_node_type(node, UnaryOp, op="DONUT")
+        assert isinstance(node, UnaryOp)
+        assert node.op == "DONUT"
 
     def test_extent(self):
         node = parse_expr("EXTENT DRAWN")
