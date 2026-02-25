@@ -4,9 +4,9 @@ A pure-Python parser for SVRF (Standard Verification Rule Format) files used by 
 
 ## Parsing Quality
 
-- **0 parser warnings** across all tested files
-- **119 unit tests** covering all major construct categories
-- Handles DRC, LVS, and antenna rule decks
+- **0 parser warnings** across all tested files (55,465 statements across 9 sample files)
+- **181 unit tests** covering all major construct categories
+- Handles DRC, LVS, and antenna rule decks from 7nm to 350nm technology nodes
 - Supports multiline expressions, `#IFDEF`-split blocks, deeply nested ternary chains with embedded preprocessor directives
 
 ## Project Structure
@@ -28,7 +28,7 @@ svrf_parser/
 tests/
   helpers.py               # Shared test utilities (parse_one, parse_expr, etc.)
   conftest.py              # pytest fixtures
-  tier1/                   # Unit tests by construct category (119 tests)
+  tier1/                   # Unit tests by construct category (181 tests)
   tier2/                   # Integration tests on real sample files
 test_samples.py            # Batch test harness for sample files
 baseline.py                # Baseline metrics collector
@@ -289,10 +289,10 @@ All nodes inherit from `AstNode` and carry `line` and `col` source location attr
 - **Layer operations**: `LAYER`, `LAYER MAP` (DATATYPE/TEXTTYPE), layer assignment (`=`)
 - **Boolean operators**: `AND`, `OR`, `NOT`, `XOR` (infix and prefix forms)
 - **Spatial operators**: `INSIDE`, `OUTSIDE`, `OUT`, `INTERACT`, `TOUCH`, `ENCLOSE`, `CUT`, `STAMP`, `IN`
-- **Compound operators**: `INSIDE EDGE`, `OUTSIDE EDGE`, `COIN EDGE`, `IN EDGE`, `OR EDGE`, `TOUCH EDGE`, `TOUCH INSIDE EDGE`, `TOUCH OUTSIDE EDGE`, `NOT TOUCH`, `NOT IN`, `NOT OUT`, `INSIDE OF LAYER`
+- **Compound operators**: `INSIDE EDGE`, `OUTSIDE EDGE`, `COIN EDGE`, `IN EDGE`, `OR EDGE`, `TOUCH EDGE`, `TOUCH INSIDE EDGE`, `TOUCH OUTSIDE EDGE`, `NOT TOUCH`, `NOT IN`, `NOT OUT`, `NOT INSIDE`, `NOT INTERACT`, `NOT ENCLOSE`, `NOT CUT`, `NOT ENCLOSE RECTANGLE`, `INSIDE OF LAYER`
 - **DRC operations**: `INT`, `EXT`, `ENC`, `DENSITY`, `OFFGRID`, `ROTATE`
 - **Geometry operations**: `SIZE`, `GROW`, `SHRINK`, `SHIFT`, `EXPAND EDGE`, `CONVEX EDGE`, `RECTANGLE`, `RECTANGLE ENCLOSURE`, `RECTANGLES`, `EXTENT`, `EXTENTS`
-- **Measurement**: `AREA`, `LENGTH`, `ANGLE`, `VERTEX`, `NET AREA RATIO`
+- **Measurement**: `AREA`, `PERIMETER`, `LENGTH`, `ANGLE`, `VERTEX`, `NET AREA RATIO`
 - **DFM**: `DFM PROPERTY`, `DFM PROPERTY NET`, `DFM DP`, `DFM RDB`
 - **WITH sub-expressions**: `WITH WIDTH`, `WITH EDGE`, `WITH TEXT`, `WITH NEIGHBOR`
 - **Connectivity**: `CONNECT`, `SCONNECT`
