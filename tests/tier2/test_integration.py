@@ -13,6 +13,7 @@ from svrf_parser.ast_nodes import *
 
 SAMPLES_DIR = Path(os.environ.get("SVRF_SAMPLES_DIR", ""))
 
+
 _SVRF_NODE_TYPES = (
     LayerDef, LayerMap, LayerAssignment,
     Directive, RuleCheckBlock,
@@ -26,7 +27,7 @@ _SVRF_NODE_TYPES = (
 def _collect_samples():
     """Collect all sample files for parametrize."""
     files = []
-    if not SAMPLES_DIR.is_dir():
+    if not os.environ.get("SVRF_SAMPLES_DIR") or not SAMPLES_DIR.is_dir():
         return files
     for dirpath, _, filenames in os.walk(SAMPLES_DIR):
         for fn in sorted(filenames):
