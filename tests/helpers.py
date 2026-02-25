@@ -144,8 +144,14 @@ def ast_equal(a, b) -> bool:
                         if not ast_equal(x, y):
                             return False
                     elif isinstance(x, tuple) and isinstance(y, tuple):
-                        if x != y:
+                        if len(x) != len(y):
                             return False
+                        for tx, ty in zip(x, y):
+                            if isinstance(tx, AstNode) and isinstance(ty, AstNode):
+                                if not ast_equal(tx, ty):
+                                    return False
+                            elif tx != ty:
+                                return False
                     elif x != y:
                         return False
             elif va != vb:

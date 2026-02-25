@@ -102,7 +102,7 @@ _KEYWORD_REGISTRY = {
     'ALSO':        {'drc_modifier'},
     'ONLY':        {'drc_modifier'},
     'COUNT':       {'drc_modifier'},
-    'PERIMETER':   {'drc_modifier'},
+    'PERIMETER':   {'drc_modifier', 'expr_starter'},
     'HIER':        {'drc_modifier'},
     'CELL':        {'drc_modifier'},
     'PROJECTING':  {'drc_modifier'},

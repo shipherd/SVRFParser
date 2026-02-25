@@ -45,11 +45,9 @@ class TestMiscExpr:
         assert "DFM" in node.op
 
     def test_func_call(self):
-        # AREA(M1) parses as ConstrainedExpr(UnaryOp("AREA")), not FuncCall
+        # AREA(M1) parses as UnaryOp("AREA") when no constraints follow
         node = parse_expr("AREA(M1)")
-        assert_node_type(node, ConstrainedExpr)
-        assert isinstance(node.expr, UnaryOp)
-        assert node.expr.op == "AREA"
+        assert_node_type(node, UnaryOp, op="AREA")
 
     def test_negative_number(self):
         node = parse_expr("-0.5")
