@@ -80,3 +80,27 @@ class TestNotCompound:
     def test_not_in(self):
         node = parse_expr("M1 NOT IN M2")
         assert_node_type(node, BinaryOp, op="NOT IN")
+
+    def test_not_inside(self):
+        node = parse_expr("M1 NOT INSIDE M2")
+        assert_node_type(node, BinaryOp, op="NOT INSIDE")
+
+    def test_not_interact(self):
+        node = parse_expr("M1 NOT INTERACT M2")
+        assert_node_type(node, BinaryOp, op="NOT INTERACT")
+
+    def test_not_enclose(self):
+        node = parse_expr("M1 NOT ENCLOSE M2")
+        assert_node_type(node, BinaryOp, op="NOT ENCLOSE")
+
+    def test_not_cut(self):
+        node = parse_expr("M1 NOT CUT M2")
+        assert_node_type(node, BinaryOp, op="NOT CUT")
+
+    def test_not_inside_edge(self):
+        node = parse_expr("M1 NOT INSIDE EDGE M2")
+        assert_node_type(node, BinaryOp, op="NOT INSIDE EDGE")
+
+    def test_not_outside_edge(self):
+        node = parse_expr("M1 NOT OUTSIDE EDGE M2")
+        assert_node_type(node, BinaryOp, op="NOT OUTSIDE EDGE")
