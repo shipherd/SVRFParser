@@ -5,7 +5,7 @@ A pure-Python parser for SVRF (Standard Verification Rule Format) files used by 
 ## Parsing Quality
 
 - **0 parser warnings** across all tested files (55,465 statements across 9 sample files)
-- **181 unit tests** covering all major construct categories
+- **195 unit tests** covering all major construct categories
 - Handles DRC, LVS, and antenna rule decks from 7nm to 350nm technology nodes
 - Supports multiline expressions, `#IFDEF`-split blocks, deeply nested ternary chains with embedded preprocessor directives
 
@@ -28,7 +28,7 @@ svrf_parser/
 tests/
   helpers.py               # Shared test utilities (parse_one, parse_expr, etc.)
   conftest.py              # pytest fixtures
-  tier1/                   # Unit tests by construct category (181 tests)
+  tier1/                   # Unit tests by construct category (195 tests)
   tier2/                   # Integration tests on real sample files
 test_samples.py            # Batch test harness for sample files
 baseline.py                # Baseline metrics collector
@@ -130,6 +130,37 @@ for stmt in tree.statements:
         print(f"Line {stmt.line}: {stmt.name} = <expr>")
     elif isinstance(stmt, RuleCheckBlock):
         print(f"Line {stmt.line}: Rule '{stmt.name}' with {len(stmt.body)} operations")
+```
+
+### Rule Check Descriptions and Variable References
+
+Rule check blocks can have multi-line `@` descriptions with `^VARNAME` variable references (per SVRF manual, `^` dereferences a variable value at runtime). The parser preserves description text verbatim and extracts variable references as `VarRef` nodes:
+
+```python
+from svrf_parser import parse
+from svrf_parser.ast_nodes import RuleCheckBlock, VarRef
+
+text = """\
+VARIABLE MIN_SPACE 0.042
+
+M1.S.1 { @ Minimum M1 space >= ^MIN_SPACE um
+@ 1. Exception: space inside LOGO region
+  INT M1 < MIN_SPACE
+}
+"""
+
+tree = parse(text)
+rule = [s for s in tree.statements if isinstance(s, RuleCheckBlock)][0]
+
+# description is list of lines, each line is list of str|VarRef segments
+for i, line in enumerate(rule.description):
+    print(f"Line {i}: {line}")
+# Line 0: ['Minimum M1 space >= ', VarRef('MIN_SPACE'), ' um']
+# Line 1: ['1. Exception: space inside LOGO region']
+
+# Extract all variable references
+var_refs = [seg for line in rule.description for seg in line if isinstance(seg, VarRef)]
+print([v.name for v in var_refs])  # ['MIN_SPACE']
 ```
 
 ### Walking the Full AST
@@ -258,7 +289,7 @@ All nodes inherit from `AstNode` and carry `line` and `col` source location attr
 | `VariableDef` | `name`, `expr` | `VARIABLE name value` |
 | `Directive` | `keywords`, `arguments`, `property_block` | `LAYOUT PATH "file"`, `DRC RESULTS DATABASE "out.db"` |
 | `LayerAssignment` | `name`, `expression` | `derived = M1 AND M2` |
-| `RuleCheckBlock` | `name`, `description`, `body` | `name { @desc ... }` |
+| `RuleCheckBlock` | `name`, `description`, `body` | `name { @desc ... }` — description is `list[list[str\|VarRef]]` with multi-line support |
 | `Connect` | `soft`, `layers`, `via_layer` | `CONNECT M1 M2 BY VIA1` |
 | `Device` | `device_type`, `device_name`, `seed_layer`, `pins`, `aux_layers`, `cmacro` | `DEVICE MOSFET(nmos) ...` |
 | `DMacro` | `name`, `params`, `body` | `DMACRO name p1 p2 { ... }` |
@@ -282,6 +313,7 @@ All nodes inherit from `AstNode` and carry `line` and `col` source location attr
 | `IfExpr` | `condition`, `then_body`, `elseifs`, `else_body` | IF/ELSE inside property blocks |
 | `PropertyBlock` | `properties`, `body` | `[ PROPERTY ... ]` |
 | `ErrorNode` | `message`, `skipped_text` | Unrecognized or erroneous construct |
+| `VarRef` | `name` | Variable reference `^VARNAME` in rule check `@` descriptions |
 
 ## Supported SVRF Syntax
 
@@ -300,7 +332,7 @@ All nodes inherit from `AstNode` and carry `line` and `col` source location attr
 - **Macros**: `DMACRO` definitions with property blocks
 - **Directives**: `LAYOUT`, `SOURCE`, `DRC`, `LVS`, `ERC`, `PEX`, `PRECISION`, `RESOLUTION`, `TITLE`, `TEXT`, `PORT`, `VIRTUAL`, `FLAG`, `UNIT`, `MASK`, `HCELL`, `RDB`, etc.
 - **Control flow**: `IF`/`ELSE`/`ELSE IF` in property blocks and rule check blocks
-- **Other**: `GROUP`, `ATTACH`, `TRACE PROPERTY`, rule check blocks (with `{` on same or next line), comments (`//`, `/* */`)
+- **Other**: `GROUP`, `ATTACH`, `TRACE PROPERTY`, rule check blocks (with `{` on same or next line), multi-line `@` descriptions with `^VARNAME` variable references, comments (`//`, `/* */`)
 
 ## Architecture
 
