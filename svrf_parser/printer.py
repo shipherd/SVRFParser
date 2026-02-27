@@ -101,15 +101,22 @@ class SvrfPrinter:
     def _emit_RuleCheckBlock(self, node):
         parts = [f"{node.name} {{"]
         if node.description:
-            if isinstance(node.description, ast.AstNode):
-                # Description is a Directive with keywords=['@'], emit it directly
-                parts.append(f"  {self.emit(node.description)}")
-            else:
-                parts.append(f"  @ {node.description}")
+            for line_segs in node.description:
+                parts.append(f"  @ {self._emit_desc_line(line_segs)}")
         for s in node.body:
             parts.append(f"  {self.emit(s)}")
         parts.append("}")
         return '\n'.join(parts)
+
+    def _emit_desc_line(self, segments):
+        """Emit a description line from a list of str/VarRef segments."""
+        parts = []
+        for seg in segments:
+            if isinstance(seg, ast.VarRef):
+                parts.append(f"^{seg.name}")
+            else:
+                parts.append(seg)
+        return ' '.join(parts)
 
     # ---- Connectivity ----
 
@@ -266,3 +273,8 @@ class SvrfPrinter:
                 parts.append(f"  {self.emit(s)}")
             parts.append("}")
         return '\n'.join(parts)
+
+    # ---- VarRef ----
+
+    def _emit_VarRef(self, node):
+        return f"^{node.name}"

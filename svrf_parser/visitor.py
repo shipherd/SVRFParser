@@ -24,6 +24,10 @@ class AstVisitor:
                 for item in child:
                     if isinstance(item, ast.AstNode):
                         item.accept(self)
+                    elif isinstance(item, list):
+                        for sub in item:
+                            if isinstance(sub, ast.AstNode):
+                                sub.accept(self)
 
     # -- Top-level --
     def visit_Program(self, node):
@@ -114,6 +118,10 @@ class AstVisitor:
 
     # -- Error --
     def visit_ErrorNode(self, node):
+        return self.generic_visit(node)
+
+    # -- Description --
+    def visit_VarRef(self, node):
         return self.generic_visit(node)
 
 
