@@ -797,19 +797,66 @@ class StatementMixin:
         self._skip_newlines()
         desc = None
         if self._at(TT.AT):
-            desc = self._parse_at_description()
+            desc = self._parse_description_block()
         body = self._parse_block_body()
         return ast.RuleCheckBlock(name=name, description=desc, body=body, **loc)
 
     # ------------------------------------------------------------------
-    # @ description line
+    # @ description lines → list of segment lists
+    # Each segment is either a plain str or a VarRef node.
+    # The lexer emits AT + COMMENT_TEXT (raw line text), so we do a
+    # lightweight scan for ^VARNAME references in the raw text.
     # ------------------------------------------------------------------
+    @staticmethod
+    def _split_comment_segments(text, loc):
+        """Split raw comment text into str and VarRef segments.
+
+        Per the SVRF manual, ^VARNAME dereferences a variable.
+        \\^ is an escape for a literal ^ character.
+        """
+        import re
+        segments = []
+        last = 0
+        for m in re.finditer(r'\\(\^)|(\^)([A-Za-z_][A-Za-z0-9_]*)', text):
+            if m.group(1):
+                # Escaped caret \^ → literal ^
+                if m.start() > last:
+                    segments.append(text[last:m.start()])
+                segments.append('^')
+                last = m.end()
+            else:
+                # Variable reference ^VARNAME
+                if m.start() > last:
+                    segments.append(text[last:m.start()])
+                segments.append(ast.VarRef(name=m.group(3), **loc))
+                last = m.end()
+        if last < len(text):
+            segments.append(text[last:])
+        # Merge adjacent strings
+        merged = []
+        for seg in segments:
+            if isinstance(seg, str) and merged and isinstance(merged[-1], str):
+                merged[-1] += seg
+            else:
+                merged.append(seg)
+        return merged or ['']
+
     def _parse_at_description(self):
+        """Parse one @ line into a list of segments (str | VarRef)."""
         loc = self._loc()
         self._advance()  # @
-        parts = []
-        while not self._at_eol():
-            parts.append(str(self._advance().value))
-        text = ' '.join(parts)
+        if self._at(TT.COMMENT_TEXT):
+            raw = self._advance().value
+            segments = self._split_comment_segments(raw, loc)
+        else:
+            segments = ['']
         self._consume_eol()
-        return ast.Directive(keywords=['@'], arguments=[text], **loc)
+        return segments
+
+    def _parse_description_block(self):
+        """Collect all consecutive @ lines into a list of segment lists."""
+        lines = []
+        lines.append(self._parse_at_description())
+        while self._at(TT.AT):
+            lines.append(self._parse_at_description())
+        return lines

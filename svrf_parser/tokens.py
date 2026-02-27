@@ -58,6 +58,7 @@ class TokenType(Enum):
     NEWLINE = auto()
     EOF = auto()
     ENCRYPTED = auto()
+    COMMENT_TEXT = auto()  # raw text after @ in rule check descriptions
 
 
 class Token:

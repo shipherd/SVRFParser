@@ -369,6 +369,7 @@ class Lexer:
             self._emit(TT.COMMA, ',')
         elif ch == '@':
             self._emit(TT.AT, '@')
+            self._scan_comment_text()
         elif ch == ';':
             self._emit(TT.SEMICOLON, ';')
         elif ch == '?':
@@ -389,3 +390,19 @@ class Lexer:
         else:
             # Skip unknown characters
             pass
+
+    # ------------------------------------------------------------------
+    # Rule check comment text (after @)
+    # ------------------------------------------------------------------
+    def _scan_comment_text(self):
+        """Capture the rest of the line after @ as raw COMMENT_TEXT."""
+        # Skip leading whitespace after @
+        while self.pos < self.length and self._ch() in (' ', '\t'):
+            self._advance()
+        start = self.pos
+        while self.pos < self.length and self._ch() not in ('\n', '\r'):
+            self._advance()
+        text = self.text[start:self.pos].rstrip()
+        if text:
+            self._mark()
+            self._emit(TT.COMMENT_TEXT, text)

@@ -1,5 +1,7 @@
 __pycache__/
+.pytest_cache/
 *.pyc
 .claude/
 nul
 baseline_report.json
+

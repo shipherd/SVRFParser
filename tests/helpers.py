@@ -52,7 +52,10 @@ def walk_ast(node) -> Iterator:
         for s in node.body:
             yield from walk_ast(s)
         if node.description:
-            yield from walk_ast(node.description)
+            for line_segs in node.description:
+                for seg in line_segs:
+                    if isinstance(seg, AstNode):
+                        yield from walk_ast(seg)
     elif isinstance(node, DMacro):
         for s in node.body:
             yield from walk_ast(s)

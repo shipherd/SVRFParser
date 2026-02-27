@@ -305,6 +305,15 @@ class DRCOp(Expression):
         self.modifiers = modifiers or []
 
 
+class VarRef(AstNode):
+    """Variable reference in description text: ^VARNAME."""
+    __slots__ = ('name',)
+
+    def __init__(self, name='', **kw):
+        super().__init__(**kw)
+        self.name = name
+
+
 class ErrorNode(AstNode):
     """Represents an unrecognized or erroneous construct in the source."""
     __slots__ = ('message', 'skipped_text')
