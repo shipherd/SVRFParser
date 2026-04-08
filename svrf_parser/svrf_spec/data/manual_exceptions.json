@@ -1,0 +1,154 @@
+{
+  "entries": [
+    {
+      "applies_to": [
+        "TOP_LEVEL_RULE_FILE"
+      ],
+      "category": "ordering",
+      "effect": "order_independent",
+      "manual_refs": [
+        "luj1752242843309\\id39084ca3-0d46-48c6-81df-86585450e37a.html"
+      ],
+      "name": "top_level_order_default",
+      "note": "Top-level SVRF rule-file statements are generally order-independent.",
+      "tags": [
+        "manual_default"
+      ]
+    },
+    {
+      "applies_to": [
+        "VARIABLE",
+        "#DEFINE"
+      ],
+      "category": "ordering",
+      "effect": "must_precede_use",
+      "manual_refs": [
+        "luj1752242843309\\id39084ca3-0d46-48c6-81df-86585450e37a.html"
+      ],
+      "name": "variable_definition_order_exception",
+      "note": "Variable and preprocessor symbol definitions must precede use sites.",
+      "tags": [
+        "manual_exception",
+        "ordered_use"
+      ]
+    },
+    {
+      "applies_to": [
+        "DRC INCREMENTAL CONNECT"
+      ],
+      "category": "ordering",
+      "effect": "ordered_exception",
+      "manual_refs": [
+        "luj1752242843309\\id39084ca3-0d46-48c6-81df-86585450e37a.html"
+      ],
+      "name": "incremental_connectivity_order_exception",
+      "note": "Incremental connectivity definitions have ordering-sensitive semantics.",
+      "tags": [
+        "manual_exception",
+        "ordered_use"
+      ]
+    },
+    {
+      "applies_to": [
+        "OPERATIONS"
+      ],
+      "category": "statement_syntax",
+      "effect": "order_free_by_default",
+      "manual_refs": [
+        "luj1752242843309\\iddc028bbf-ba2d-4d09-b069-717e96433bbb.html"
+      ],
+      "name": "operation_item_order_default",
+      "note": "Operation syntax elements generally appear in any order unless the manual says otherwise.",
+      "tags": [
+        "manual_default"
+      ]
+    },
+    {
+      "applies_to": [
+        "SPECIFICATION_STATEMENTS"
+      ],
+      "category": "statement_syntax",
+      "effect": "ordered_exception",
+      "manual_refs": [
+        "luj1752242843309\\iddc028bbf-ba2d-4d09-b069-717e96433bbb.html"
+      ],
+      "name": "specification_statement_order_exception",
+      "note": "Specification statements are not universally order-free.",
+      "tags": [
+        "manual_exception",
+        "ordered_options"
+      ]
+    },
+    {
+      "applies_to": [
+        "DFM_OPERATIONS"
+      ],
+      "category": "statement_syntax",
+      "effect": "ordered_exception",
+      "manual_refs": [
+        "luj1752242843309\\iddc028bbf-ba2d-4d09-b069-717e96433bbb.html"
+      ],
+      "name": "dfm_operation_order_exception",
+      "note": "Many DFM operations are documented with statement-specific ordering constraints.",
+      "tags": [
+        "manual_exception",
+        "ordered_options"
+      ]
+    },
+    {
+      "applies_to": [
+        "MULTIWORD_SYNTAX_ELEMENTS"
+      ],
+      "category": "tokenization",
+      "effect": "atomic",
+      "manual_refs": [
+        "luj1752242843309\\iddc028bbf-ba2d-4d09-b069-717e96433bbb.html"
+      ],
+      "name": "multiword_keyword_atomic",
+      "note": "Multi-word syntax elements are atomic and cannot be reordered or split.",
+      "tags": [
+        "atomic_keyword",
+        "manual_exception"
+      ]
+    },
+    {
+      "applies_to": [
+        "STATEMENT_BOUNDARIES"
+      ],
+      "category": "whitespace",
+      "effect": "primary_keyword_delimited",
+      "manual_refs": [
+        "luj1752242843309\\iddc028bbf-ba2d-4d09-b069-717e96433bbb.html"
+      ],
+      "name": "statement_boundary_primary_keywords",
+      "note": "Whitespace is broadly insignificant; statement boundaries are inferred from primary keywords and structure.",
+      "tags": [
+        "manual_default",
+        "whitespace_agnostic"
+      ]
+    },
+    {
+      "applies_to": [
+        "TVF",
+        "BUILTIN_LANGUAGES"
+      ],
+      "category": "embedded_language",
+      "effect": "separate_subgrammar",
+      "manual_refs": [
+        "hri1752242863124\\id56178a50-4711-4336-8418-0fc85e03fc23.html"
+      ],
+      "name": "builtin_language_subgrammar_boundary",
+      "note": "Built-in languages have their own syntax rules and should not be parsed as ordinary SVRF statements.",
+      "tags": [
+        "embedded_language",
+        "manual_exception"
+      ]
+    }
+  ],
+  "generated_from": [
+    "svrf_parser.svrf_spec.manual_sources",
+    "svrf_parser.svrf_spec.manual_overrides"
+  ],
+  "manual_root": "$SVRF_MANUAL_ROOT",
+  "schema_version": 1
+}

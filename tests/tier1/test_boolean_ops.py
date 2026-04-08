@@ -1,5 +1,6 @@
 """Tier 1 unit tests: Boolean operations."""
 
+import unittest
 import sys
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
@@ -8,7 +9,7 @@ from tests.helpers import parse_expr, assert_node_type
 from svrf_parser.ast_nodes import *
 
 
-class TestBinaryBoolOps:
+class TestBinaryBoolOps(unittest.TestCase):
     def test_and(self):
         node = parse_expr("M1 AND M2")
         assert_node_type(node, BinaryOp, op="AND")
@@ -35,7 +36,7 @@ class TestBinaryBoolOps:
         assert node.left.op == "OR"
 
 
-class TestUnaryBoolOps:
+class TestUnaryBoolOps(unittest.TestCase):
     def test_not_unary(self):
         node = parse_expr("NOT M1")
         assert_node_type(node, UnaryOp, op="NOT")
@@ -45,14 +46,14 @@ class TestUnaryBoolOps:
         assert_node_type(node, UnaryOp, op="COPY")
 
 
-class TestPrefixOr:
+class TestPrefixOr(unittest.TestCase):
     def test_prefix_or(self):
         node = parse_expr("OR M1 M2 M3")
         # Should build a chain of OR BinaryOps
         assert_node_type(node, BinaryOp, op="OR")
 
 
-class TestXor:
+class TestXor(unittest.TestCase):
     def test_xor_infix(self):
         node = parse_expr("M1 XOR M2")
         assert_node_type(node, BinaryOp, op="XOR")
@@ -69,7 +70,7 @@ class TestXor:
         assert node.left.op == "XOR"
 
 
-class TestPrefixAnd:
+class TestPrefixAnd(unittest.TestCase):
     def test_prefix_and(self):
         node = parse_expr("AND M1 M2")
         assert_node_type(node, BinaryOp, op="AND")

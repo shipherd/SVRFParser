@@ -1,0 +1,69 @@
+{
+  "entries": [
+    {
+      "family": "layer",
+      "name": "layer"
+    },
+    {
+      "family": "include",
+      "name": "include"
+    },
+    {
+      "family": "connect",
+      "name": "connect"
+    },
+    {
+      "family": "connect",
+      "name": "sconnect"
+    },
+    {
+      "family": "variable",
+      "name": "variable"
+    },
+    {
+      "family": "named_scalar_list",
+      "name": "group"
+    },
+    {
+      "family": "scalar_directive",
+      "name": "simple_keyword_directive"
+    },
+    {
+      "family": "device",
+      "name": "device"
+    },
+    {
+      "family": "dmacro",
+      "name": "dmacro"
+    },
+    {
+      "family": "macro_call",
+      "name": "macro_call"
+    },
+    {
+      "family": "attach",
+      "name": "attach"
+    },
+    {
+      "family": "trace_property",
+      "name": "trace_property"
+    },
+    {
+      "family": "directive",
+      "name": "directive"
+    },
+    {
+      "family": "rule_check",
+      "name": "rule_check"
+    },
+    {
+      "family": "property_block",
+      "name": "property_block"
+    }
+  ],
+  "generated_from": [
+    "svrf_parser.statement_shape"
+  ],
+  "manual_root": "$SVRF_MANUAL_ROOT",
+  "schema_version": 1
+}

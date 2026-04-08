@@ -1,4 +1,4 @@
-"""Test harness for SVRF parser - parses all sample files and reports results."""
+"""Test harness for SVRF parser - parses candidate SVRF files and reports results."""
 
 import os
 import sys
@@ -8,10 +8,36 @@ from pathlib import Path
 # Add project root to path
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from svrf_parser import parse_file_with_diagnostics, parse_file
-from svrf_parser.ast_nodes import *
+from svrf_parser import parse_file_with_diagnostics
+from sample_corpus import iter_sample_files
+from svrf_parser.svrf_constructs import count_svrf_constructs
 
 SAMPLES_DIR = None
+
+
+def _usage():
+    print("Usage: python test_samples.py <samples_dir_or_file> [single_file] [--fail-on-warnings]")
+
+
+def _parse_cli_args(argv):
+    fail_on_warnings = False
+    positional = []
+    for arg in argv:
+        if arg == "--fail-on-warnings":
+            fail_on_warnings = True
+        elif arg.startswith("--"):
+            raise SystemExit(f"Unknown option: {arg}")
+        else:
+            positional.append(arg)
+
+    if not positional:
+        _usage()
+        raise SystemExit(1)
+
+    samples_dir = positional[0]
+    single_file = positional[1] if len(positional) > 1 else None
+    return samples_dir, single_file, fail_on_warnings
+
 
 def _get_samples_dir():
     global SAMPLES_DIR
@@ -20,50 +46,56 @@ def _get_samples_dir():
     if len(sys.argv) > 1:
         SAMPLES_DIR = sys.argv[1]
         return SAMPLES_DIR
-    print("Usage: python test_samples.py <samples_dir> [single_file]")
+    _usage()
     sys.exit(1)
 
-# SVRF-characteristic AST node types
-_SVRF_NODE_TYPES = (
-    LayerDef, LayerMap, LayerAssignment,
-    Directive, RuleCheckBlock,
-    Connect, Device, DMacro,
-    Define, IfDef, Include, EncryptedBlock,
-    Group, Attach, TraceProperty,
-    VariableDef,
-)
+
+def _resolve_target(root, single_file=None):
+    if not single_file:
+        return Path(root)
+    single_path = Path(single_file)
+    if single_path.is_absolute():
+        return single_path
+    rooted = Path(root) / single_path
+    return rooted if rooted.exists() else single_path
 
 
 def find_sample_files(root):
-    """Walk samples directory and collect all files."""
-    if not os.path.isdir(root):
-        print(f"No samples directory found at {root}")
+    """Collect candidate SVRF files from a directory or direct file path."""
+    root_path = Path(root)
+    if root_path.is_file():
+        return [str(root_path)]
+    if not root_path.is_dir():
+        print(f"No sample file or directory found at {root}")
         return []
-    files = []
-    for dirpath, _, filenames in os.walk(root):
-        for fn in sorted(filenames):
-            files.append(os.path.join(dirpath, fn))
-    return files
+    return [str(path) for path in iter_sample_files(root_path)]
 
 
-def run_tests():
-    samples_dir = _get_samples_dir()
+def _display_path(path, root):
+    root_path = Path(root)
+    if root_path.is_dir():
+        return os.path.relpath(path, root_path)
+    return Path(path).name
+
+
+def run_tests(samples_dir=None, *, fail_on_warnings=False):
+    samples_dir = samples_dir or _get_samples_dir()
     files = find_sample_files(samples_dir)
 
     if not files:
-        print("No sample files found.")
-        return
+        print("No candidate files found.")
+        return 1
 
     total = len(files)
     passed = 0
     failed = 0
     results = []
 
-    print(f"Found {total} sample files.\n")
+    print(f"Found {total} candidate files.\n")
     print("-" * 80)
 
     for path in files:
-        rel = os.path.relpath(path, samples_dir)
+        rel = _display_path(path, samples_dir)
         size = os.path.getsize(path)
         size_str = f"{size / 1024:.1f}KB" if size < 1024 * 1024 else \
                    f"{size / (1024 * 1024):.1f}MB"
@@ -76,13 +108,20 @@ def run_tests():
             n_warnings = len(warnings)
 
             # Calculate SVRF node ratio
-            svrf_count = sum(
-                1 for s in tree.statements if isinstance(s, _SVRF_NODE_TYPES)
-            ) if tree else 0
+            svrf_count = count_svrf_constructs(tree.statements) if tree else 0
             ratio = svrf_count / n_stmts * 100 if n_stmts else 0
 
-            print(f"  PASS  {rel} ({size_str}, {n_stmts} stmts, "
+            warning_failure = fail_on_warnings and n_warnings
+            status = "FAIL" if warning_failure else "PASS"
+            print(f"  {status}  {rel} ({size_str}, {n_stmts} stmts, "
                   f"{n_warnings} warnings, {ratio:.0f}% SVRF, {elapsed:.2f}s)")
+            if warning_failure:
+                print(f"        Parser warnings: {n_warnings}")
+                for warning in warnings[:3]:
+                    print(f"        {warning}")
+                failed += 1
+                results.append(('FAIL', rel, f"{n_warnings} parser warnings"))
+                continue
             passed += 1
             results.append(('PASS', rel, None))
         except Exception as e:
@@ -106,13 +145,8 @@ def run_tests():
         return 1
     return 0
 
-def single_run(fn):
-    tree = parse_file(fn)
-    for stm in tree.statements:
-        if isinstance(stm, LayerAssignment):
-            print(f"{stm.name}")
+
 if __name__ == '__main__':
-    if len(sys.argv) > 2:
-        sys.exit(single_run(sys.argv[2]))
-    else:
-        sys.exit(run_tests())
+    samples_dir, single_file, fail_on_warnings = _parse_cli_args(sys.argv[1:])
+    SAMPLES_DIR = str(_resolve_target(samples_dir, single_file))
+    sys.exit(run_tests(SAMPLES_DIR, fail_on_warnings=fail_on_warnings))

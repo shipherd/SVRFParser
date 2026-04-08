@@ -1,5 +1,6 @@
 """Tier 1 unit tests: Preprocessor directives."""
 
+import unittest
 import sys
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
@@ -8,7 +9,7 @@ from tests.helpers import parse_one, assert_node_type, collect_warnings
 from svrf_parser.ast_nodes import *
 
 
-class TestDefine:
+class TestDefine(unittest.TestCase):
     def test_define_simple(self):
         node = parse_one("#DEFINE FOO")
         assert_node_type(node, Define, name="FOO", value=None)
@@ -22,7 +23,7 @@ class TestDefine:
         assert_node_type(node, Define, name="BAR", value="hello world")
 
 
-class TestIfDef:
+class TestIfDef(unittest.TestCase):
     def test_ifdef_simple(self):
         node = parse_one("#IFDEF FOO\nLAYER M1 1\n#ENDIF")
         assert_node_type(node, IfDef, name="FOO", negated=False)
@@ -50,13 +51,13 @@ class TestIfDef:
         assert node.then_body[0].name == "B"
 
 
-class TestInclude:
+class TestInclude(unittest.TestCase):
     def test_include(self):
         node = parse_one('#INCLUDE "path.svrf"')
         assert_node_type(node, Include, path="path.svrf")
 
 
-class TestUndefine:
+class TestUndefine(unittest.TestCase):
     def test_undefine_simple(self):
         node = parse_one("#UNDEFINE FOO")
         assert_node_type(node, Directive)
@@ -76,7 +77,7 @@ class TestUndefine:
         assert node.then_body[0].keywords == ['#UNDEFINE']
 
 
-class TestEncrypted:
+class TestEncrypted(unittest.TestCase):
     def test_encrypted_block(self):
         text = "#ENCRYPT\nsome encrypted content\n#ENDCRYPT"
         node = parse_one(text)

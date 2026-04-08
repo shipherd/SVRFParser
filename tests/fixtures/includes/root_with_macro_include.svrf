@@ -1,0 +1,2 @@
+INCLUDE "defs_macro.svrf"
+CMACRO MY_MACRO ARG1

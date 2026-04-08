@@ -1,408 +1,359 @@
-"""Lexer for SVRF source files. Converts raw text into a token stream."""
+"""Regex-based lexer for SVRF source files."""
 
-from .tokens import TokenType, Token
+from __future__ import annotations
+
+import re
+
+from .exceptions import LexerError
+from .keywords import _KEYWORD_ALIASES
+from .tokens import Token, TokenType
 
 TT = TokenType
 
-_PP_MAP = {
-    'DEFINE': TT.PP_DEFINE,
-    'IFDEF': TT.PP_IFDEF,
-    'IFNDEF': TT.PP_IFNDEF,
-    'ELSE': TT.PP_ELSE,
-    'ENDIF': TT.PP_ENDIF,
-    'INCLUDE': TT.PP_INCLUDE,
-    'ENCRYPT': TT.PP_ENCRYPT,
-    'ENDCRYPT': TT.PP_ENDCRYPT,
-    'DECRYPT': TT.PP_DECRYPT,
-    'UNDEFINE': TT.PP_UNDEFINE,
+_TOKEN_RE = re.compile(
+    r"""
+    (?P<WHITESPACE>[ \t\f]+)
+  | (?P<NEWLINE>\r\n|\r|\n)
+  | (?P<LINECOMMENT>//[^\r\n]*)
+  | (?P<BLOCKCOMMENT>/\*.*?\*/)
+  | (?P<PREPROCESSOR>\#[A-Za-z_][A-Za-z0-9_]*)
+  | (?P<OPERATOR>==|!=|<=|>=|\|\||&&|::)
+  | (?P<SYMBOL>[{}\[\](),=<>+\-*/^%?:$~@!;.])
+  | (?P<NUMBER>(?!\d+(?:[A-DF-Za-df-z_]|[Ee](?![+\-]?\d)))(?:\d+\.\d*|\.\d+|\d+)(?:[eE][+\-]?\d+)?)(?![A-Za-z_.])
+  | (?P<IDENT>(?:[A-Za-z_][A-Za-z0-9_.]*|\d+[A-Za-z_][A-Za-z0-9_.]*)\??)
+  | (?P<MISMATCH>.)
+    """,
+    re.VERBOSE | re.DOTALL,
+)
+
+_ESCAPE_MAP = {
+    "n": "\n",
+    "r": "\r",
+    "t": "\t",
+    "\\": "\\",
+    '"': '"',
+    "'": "'",
 }
 
 
 class Lexer:
     """Tokenizer for SVRF source text."""
 
-    def __init__(self, text: str, filename: str = "<input>"):
-        self.text = text
+    def __init__(self, text, filename="<input>"):
+        self.text = text or ""
         self.filename = filename
+        self.length = len(self.text)
         self.pos = 0
         self.line = 1
         self.col = 1
-        self.length = len(text)
         self._tokens = []
         self._tokenize()
 
-    # ------------------------------------------------------------------
-    # Public
-    # ------------------------------------------------------------------
     def tokens(self):
         return self._tokens
 
-    # ------------------------------------------------------------------
-    # Core scanning helpers
-    # ------------------------------------------------------------------
-    def _ch(self):
-        if self.pos < self.length:
-            return self.text[self.pos]
-        return '\0'
-
-    def _peek(self, offset=1):
-        p = self.pos + offset
-        if p < self.length:
-            return self.text[p]
-        return '\0'
-
-    def _advance(self):
-        ch = self.text[self.pos]
-        self.pos += 1
-        if ch == '\n':
-            self.line += 1
-            self.col = 1
-        else:
-            self.col += 1
-        return ch
-
-    def _match(self, expected):
-        if self.pos < self.length and self.text[self.pos] == expected:
-            self._advance()
-            return True
-        return False
-
-    def _emit(self, tt, value):
-        self._tokens.append(Token(tt, value, self._tok_line, self._tok_col))
-
-    def _mark(self):
-        self._tok_line = self.line
-        self._tok_col = self.col
-
-    # ------------------------------------------------------------------
-    # Main tokenize loop
-    # ------------------------------------------------------------------
     def _tokenize(self):
         while self.pos < self.length:
-            self._mark()
-            ch = self._ch()
-
-            # Newline
-            if ch == '\n':
-                self._advance()
-                self._emit_newline()
-                continue
-
-            # Carriage return
-            if ch == '\r':
-                self._advance()
-                if self._ch() == '\n':
-                    self._advance()
-                self._emit_newline()
-                continue
-
-            # Whitespace (not newline)
-            if ch in (' ', '\t'):
-                self._skip_whitespace()
-                continue
-
-            # Line comment //
-            if ch == '/' and self._peek() == '/':
-                self._skip_line_comment()
-                continue
-
-            # Block comment /* */
-            if ch == '/' and self._peek() == '*':
-                self._skip_block_comment()
-                continue
-
-            # Preprocessor directive #
-            if ch == '#':
-                self._scan_preprocessor()
-                continue
-
-            # String literals
-            if ch == '"' or ch == "'":
+            ch = self.text[self.pos]
+            if ch in ('"', "'"):
                 self._scan_string(ch)
                 continue
 
-            # Numbers
-            if ch.isdigit() or (ch == '.' and self._peek().isdigit()):
-                self._scan_number()
+            match = _TOKEN_RE.match(self.text, self.pos)
+            if match is None:
+                raise LexerError("Unable to match token", self.line, self.col)
+
+            kind = match.lastgroup
+            lexeme = match.group(0)
+            line = self.line
+            col = self.col
+            start_offset = self.pos
+
+            if kind == "WHITESPACE":
+                self._advance(lexeme)
                 continue
 
-            # Identifiers
-            if ch.isalpha() or ch == '_':
-                self._scan_identifier()
+            if kind == "NEWLINE":
+                self._advance(lexeme)
+                self._append_token(
+                    TT.NEWLINE,
+                    "\n",
+                    line,
+                    col,
+                    start_offset,
+                    raw=lexeme,
+                )
                 continue
 
-            # Operators and delimiters
-            self._scan_operator()
+            if kind in ("LINECOMMENT", "BLOCKCOMMENT"):
+                self._advance(lexeme)
+                continue
 
-        self._mark()
-        self._emit(TT.EOF, '')
+            if kind == "PREPROCESSOR":
+                value = lexeme.upper()
+                self._advance(lexeme)
+                self._append_token(
+                    TT.PREPROCESSOR,
+                    value,
+                    line,
+                    col,
+                    start_offset,
+                    raw=lexeme,
+                )
+                if value in {"#ENCRYPT", "#DECRYPT"}:
+                    self._scan_encrypted_payload()
+                continue
 
-    # ------------------------------------------------------------------
-    # Newline handling
-    # ------------------------------------------------------------------
-    def _emit_newline(self):
-        if self._tokens and self._tokens[-1].type != TT.NEWLINE:
-            self._emit(TT.NEWLINE, '\n')
+            if kind == "OPERATOR":
+                self._advance(lexeme)
+                self._append_token(TT.SYMBOL, lexeme, line, col, start_offset)
+                continue
 
-    # ------------------------------------------------------------------
-    # Whitespace and comments
-    # ------------------------------------------------------------------
-    def _skip_whitespace(self):
-        while self.pos < self.length and self._ch() in (' ', '\t'):
-            self._advance()
+            if kind == "SYMBOL":
+                self._advance(lexeme)
+                if lexeme == "@":
+                    self._scan_rule_comment(line, col, start_offset)
+                else:
+                    self._append_token(TT.SYMBOL, lexeme, line, col, start_offset)
+                continue
 
-    def _skip_line_comment(self):
-        while self.pos < self.length and self._ch() != '\n':
-            self._advance()
+            if kind == "NUMBER":
+                self._advance(lexeme)
+                value = float(lexeme) if ("." in lexeme or "e" in lexeme.lower()) else int(lexeme)
+                self._append_token(
+                    TT.NUMBER,
+                    value,
+                    line,
+                    col,
+                    start_offset,
+                    raw=lexeme,
+                )
+                continue
 
-    def _skip_block_comment(self):
-        self._advance()  # /
-        self._advance()  # *
-        while self.pos < self.length:
-            if self._ch() == '*' and self._peek() == '/':
-                self._advance()
-                self._advance()
-                return
-            self._advance()
+            if kind == "IDENT":
+                self._advance(lexeme)
+                value = lexeme.upper()
+                value = _KEYWORD_ALIASES.get(value, value)
+                self._append_token(
+                    TT.IDENT,
+                    value,
+                    line,
+                    col,
+                    start_offset,
+                    raw=lexeme,
+                )
+                continue
 
-    # ------------------------------------------------------------------
-    # Preprocessor
-    # ------------------------------------------------------------------
-    def _scan_preprocessor(self):
-        self._advance()  # skip #
-        # Read directive name
-        start = self.pos
-        while self.pos < self.length and self._ch().isalpha():
-            self._advance()
-        name = self.text[start:self.pos].upper()
+            raise LexerError(
+                f"Unexpected character {lexeme!r}",
+                self.line,
+                self.col,
+            )
 
-        tt = _PP_MAP.get(name)
-        if tt is None:
-            # Unknown preprocessor directive, treat as identifier
-            self._emit(TT.IDENT, '#' + self.text[start:self.pos])
-            return
+        self._tokens.append(
+            Token(
+                TT.EOF,
+                "",
+                self.line,
+                self.col,
+                self.line,
+                self.col,
+                self.pos,
+                self.pos,
+                raw="",
+            )
+        )
 
-        if tt == TT.PP_ENCRYPT:
-            self._emit(TT.PP_ENCRYPT, '#ENCRYPT')
-            self._scan_encrypted_block()
-            return
+    def _append_token(self, type_, value, line, col, start_offset, raw=None):
+        self._tokens.append(
+            Token(
+                type_,
+                value,
+                line,
+                col,
+                self.line,
+                self.col,
+                start_offset,
+                self.pos,
+                raw=raw,
+            )
+        )
 
-        if tt == TT.PP_DECRYPT:
-            self._emit(TT.PP_DECRYPT, '#DECRYPT')
-            self._scan_encrypted_block()
-            return
+    def _advance(self, lexeme):
+        i = 0
+        while i < len(lexeme):
+            ch = lexeme[i]
+            self.pos += 1
+            if ch == "\r":
+                if i + 1 < len(lexeme) and lexeme[i + 1] == "\n":
+                    self.pos += 1
+                    i += 1
+                self.line += 1
+                self.col = 1
+            elif ch == "\n":
+                self.line += 1
+                self.col = 1
+            else:
+                self.col += 1
+            i += 1
 
-        if tt == TT.PP_ENDCRYPT:
-            self._emit(TT.PP_ENDCRYPT, '#ENDCRYPT')
-            return
-
-        self._emit(tt, '#' + name)
-
-    def _scan_encrypted_block(self):
-        """Capture everything until #ENDCRYPT or end of file as encrypted content."""
-        # Skip rest of current line
-        while self.pos < self.length and self._ch() != '\n':
-            self._advance()
-        if self.pos < self.length:
-            self._advance()  # skip newline
-
-        start = self.pos
-        while self.pos < self.length:
-            if self._ch() == '#':
-                # Check for #ENDCRYPT
-                rest = self.text[self.pos:self.pos + 10].upper()
-                if rest.startswith('#ENDCRYPT') or rest.startswith('#END'):
-                    break
-            self._advance()
-
-        content = self.text[start:self.pos]
-        if content.strip():
-            self._mark()
-            self._emit(TT.ENCRYPTED, content)
-
-        # Scan #ENDCRYPT if present
-        if self.pos < self.length and self._ch() == '#':
-            self._mark()
-            self._advance()  # #
-            s = self.pos
-            while self.pos < self.length and self._ch().isalpha():
-                self._advance()
-            self._emit(TT.PP_ENDCRYPT, '#ENDCRYPT')
-
-    # ------------------------------------------------------------------
-    # String literals
-    # ------------------------------------------------------------------
     def _scan_string(self, quote):
-        self._advance()  # opening quote
-        parts = []
+        line = self.line
+        col = self.col
+        start_offset = self.pos
+        self.pos += 1
+        self.col += 1
+        chars = []
+
         while self.pos < self.length:
-            ch = self._ch()
+            ch = self.text[self.pos]
             if ch == quote:
-                self._advance()
-                self._emit(TT.STRING, ''.join(parts))
+                self.pos += 1
+                self.col += 1
+                raw = quote + "".join(chars) + quote
+                self._tokens.append(
+                    Token(
+                        TT.STRING,
+                        self._unescape_string(chars),
+                        line,
+                        col,
+                        self.line,
+                        self.col,
+                        start_offset,
+                        self.pos,
+                        raw=raw,
+                    )
+                )
                 return
-            if ch == '\\':
-                self._advance()
-                parts.append(self._advance() if self.pos < self.length else '\\')
-            elif ch == '\n':
-                # Unterminated string at newline - emit what we have
-                break
-            else:
-                parts.append(self._advance())
-        self._emit(TT.STRING, ''.join(parts))
+            if ch in "\r\n":
+                raw = quote + "".join(chars)
+                self._tokens.append(
+                    Token(
+                        TT.STRING,
+                        self._unescape_string(chars),
+                        line,
+                        col,
+                        self.line,
+                        self.col,
+                        start_offset,
+                        self.pos,
+                        raw=raw,
+                    )
+                )
+                return
+            if ch == "\\" and self.pos + 1 < self.length:
+                chars.append(ch)
+                self.pos += 1
+                self.col += 1
+                ch = self.text[self.pos]
+            chars.append(ch)
+            self.pos += 1
+            self.col += 1
 
-    # ------------------------------------------------------------------
-    # Number literals
-    # ------------------------------------------------------------------
-    def _scan_number(self):
+        raw = quote + "".join(chars)
+        self._tokens.append(
+            Token(
+                TT.STRING,
+                self._unescape_string(chars),
+                line,
+                col,
+                self.line,
+                self.col,
+                start_offset,
+                self.pos,
+                raw=raw,
+            )
+        )
+
+    def _unescape_string(self, chars):
+        value = []
+        i = 0
+        while i < len(chars):
+            ch = chars[i]
+            if ch == "\\" and i + 1 < len(chars):
+                nxt = chars[i + 1]
+                value.append(_ESCAPE_MAP.get(nxt, nxt))
+                i += 2
+                continue
+            value.append(ch)
+            i += 1
+        return "".join(value)
+
+    def _scan_rule_comment(self, line, col, start_offset):
+        while self.pos < self.length and self.text[self.pos] in (" ", "\t"):
+            self.pos += 1
+            self.col += 1
         start = self.pos
-        has_dot = False
-        has_exp = False
-
-        while self.pos < self.length:
-            ch = self._ch()
-            if ch.isdigit():
-                self._advance()
-            elif ch == '.' and not has_dot and not has_exp:
-                has_dot = True
-                self._advance()
-            elif ch in ('e', 'E') and not has_exp:
-                has_exp = True
-                has_dot = True  # treat as float
-                self._advance()
-                if self.pos < self.length and self._ch() in ('+', '-'):
-                    self._advance()
-            else:
-                break
-
-        text = self.text[start:self.pos]
-        if has_dot or has_exp:
-            self._emit(TT.FLOAT, float(text))
-        else:
-            self._emit(TT.INTEGER, int(text))
-
-    # ------------------------------------------------------------------
-    # Identifiers
-    # ------------------------------------------------------------------
-    def _scan_identifier(self):
-        start = self.pos
-        while self.pos < self.length:
-            ch = self._ch()
-            if ch.isalnum() or ch == '_':
-                self._advance()
-            elif ch == ':' and self._peek().isalnum():
-                # Colon-identifiers like DRC:1
-                self._advance()
-            elif ch == '?' and self.pos > start:
-                # Wildcard suffix like AA_?
-                self._advance()
-                break
-            elif ch == '.' and self._peek().isalnum():
-                # Dotted identifiers
-                self._advance()
-            else:
-                break
-        text = self.text[start:self.pos]
-        self._emit(TT.IDENT, text)
-
-    # ------------------------------------------------------------------
-    # Operators and delimiters
-    # ------------------------------------------------------------------
-    def _scan_operator(self):
-        ch = self._advance()
-
-        if ch == '=':
-            if self._match('='):
-                self._emit(TT.EQEQ, '==')
-            else:
-                self._emit(TT.EQUALS, '=')
-        elif ch == '!':
-            if self._match('='):
-                self._emit(TT.BANGEQ, '!=')
-            else:
-                self._emit(TT.BANG, '!')
-        elif ch == '<':
-            if self._match('='):
-                self._emit(TT.LE, '<=')
-            else:
-                self._emit(TT.LT, '<')
-        elif ch == '>':
-            if self._match('='):
-                self._emit(TT.GE, '>=')
-            else:
-                self._emit(TT.GT_OP, '>')
-        elif ch == '&':
-            if self._match('&'):
-                self._emit(TT.AMPAMP, '&&')
-            else:
-                self._emit(TT.IDENT, '&')
-        elif ch == '|':
-            if self._match('|'):
-                self._emit(TT.PIPEPIPE, '||')
-            else:
-                self._emit(TT.IDENT, '|')
-        elif ch == '+':
-            self._emit(TT.PLUS, '+')
-        elif ch == '-':
-            self._emit(TT.MINUS, '-')
-        elif ch == '*':
-            self._emit(TT.STAR, '*')
-        elif ch == '/':
-            self._emit(TT.SLASH, '/')
-        elif ch == '^':
-            self._emit(TT.CARET, '^')
-        elif ch == '%':
-            self._emit(TT.PERCENT, '%')
-        elif ch == '(':
-            self._emit(TT.LPAREN, '(')
-        elif ch == ')':
-            self._emit(TT.RPAREN, ')')
-        elif ch == '{':
-            self._emit(TT.LBRACE, '{')
-        elif ch == '}':
-            self._emit(TT.RBRACE, '}')
-        elif ch == '[':
-            self._emit(TT.LBRACKET, '[')
-        elif ch == ']':
-            self._emit(TT.RBRACKET, ']')
-        elif ch == ',':
-            self._emit(TT.COMMA, ',')
-        elif ch == '@':
-            self._emit(TT.AT, '@')
-            self._scan_comment_text()
-        elif ch == ';':
-            self._emit(TT.SEMICOLON, ';')
-        elif ch == '?':
-            self._emit(TT.QUESTION, '?')
-        elif ch == ':':
-            if self._match(':'):
-                self._emit(TT.COLONCOLON, '::')
-            else:
-                self._emit(TT.COLON, ':')
-        elif ch == '$':
-            # Environment variable reference $VAR
-            start = self.pos
-            while self.pos < self.length and (self._ch().isalnum() or self._ch() == '_'):
-                self._advance()
-            self._emit(TT.IDENT, '$' + self.text[start:self.pos])
-        elif ch == '~':
-            self._emit(TT.IDENT, '~')
-        else:
-            # Skip unknown characters
-            pass
-
-    # ------------------------------------------------------------------
-    # Rule check comment text (after @)
-    # ------------------------------------------------------------------
-    def _scan_comment_text(self):
-        """Capture the rest of the line after @ as raw COMMENT_TEXT."""
-        # Skip leading whitespace after @
-        while self.pos < self.length and self._ch() in (' ', '\t'):
-            self._advance()
-        start = self.pos
-        while self.pos < self.length and self._ch() not in ('\n', '\r'):
-            self._advance()
+        while self.pos < self.length and self.text[self.pos] not in "\r\n":
+            self.pos += 1
+            self.col += 1
         text = self.text[start:self.pos].rstrip()
-        if text:
-            self._mark()
-            self._emit(TT.COMMENT_TEXT, text)
+        self._tokens.append(
+            Token(
+                TT.RULE_COMMENT,
+                text,
+                line,
+                col,
+                self.line,
+                self.col,
+                start_offset,
+                self.pos,
+                raw=text,
+            )
+        )
+
+    def _scan_encrypted_payload(self):
+        chunks = []
+        start_line = self.line
+        start_col = self.col
+        start_offset = self.pos
+
+        while self.pos < self.length:
+            if not chunks and self.text[self.pos] in "\r\n":
+                line = self.text[self.pos]
+                if line == "\r" and self.pos + 1 < self.length and self.text[self.pos + 1] == "\n":
+                    line = "\r\n"
+                self._advance(line)
+                start_line = self.line
+                start_col = self.col
+                start_offset = self.pos
+                continue
+
+            line_start = self.pos
+            line_line = self.line
+            line_col = self.col
+            while self.pos < self.length and self.text[self.pos] not in "\r\n":
+                self.pos += 1
+                self.col += 1
+            line_text = self.text[line_start:self.pos]
+
+            if line_text.lstrip(" \t").upper().startswith("#ENDCRYPT"):
+                self.pos = line_start
+                self.line = line_line
+                self.col = line_col
+                break
+
+            chunks.append(line_text)
+
+            if self.pos < self.length and self.text[self.pos] in "\r\n":
+                newline = self.text[self.pos]
+                if newline == "\r" and self.pos + 1 < self.length and self.text[self.pos + 1] == "\n":
+                    newline = "\r\n"
+                self._advance(newline)
+                chunks.append("\n")
+
+        payload = "".join(chunks).rstrip("\n")
+        if payload:
+            self._tokens.append(
+                Token(
+                    TT.ENCRYPTED,
+                    payload,
+                    start_line,
+                    start_col,
+                    self.line,
+                    self.col,
+                    start_offset,
+                    self.pos,
+                    raw=payload,
+                )
+            )

@@ -1,0 +1,98 @@
+{
+  "entries": [
+    {
+      "name": "assignment_reference",
+      "parser_method": "_parse_ident_layer_ref",
+      "priority": 110,
+      "tags": [
+        "assignment_reference"
+      ]
+    },
+    {
+      "name": "measurement",
+      "parser_method": "_parse_ident_measurement_nud",
+      "priority": 100,
+      "tags": [
+        "measurement"
+      ]
+    },
+    {
+      "name": "inside_outside_cell",
+      "parser_method": "_parse_inside_outside_cell_nud",
+      "priority": 95,
+      "tags": [
+        "inside_outside_cell"
+      ]
+    },
+    {
+      "name": "edge_binary_prefix",
+      "parser_method": "_parse_prefix_edge_binary_nud",
+      "priority": 90,
+      "tags": [
+        "edge_binary_prefix"
+      ]
+    },
+    {
+      "name": "prefix_boolean",
+      "parser_method": "_parse_prefix_boolean_nud",
+      "priority": 85,
+      "tags": [
+        "prefix_boolean"
+      ]
+    },
+    {
+      "name": "unary_ident",
+      "parser_method": "_parse_ident_unary_nud",
+      "priority": 80,
+      "tags": [
+        "unary_ident"
+      ]
+    },
+    {
+      "name": "function_call",
+      "parser_method": "_parse_function_call_nud",
+      "priority": 70,
+      "tags": [
+        "callable_name",
+        "plain_function_call"
+      ]
+    },
+    {
+      "name": "spaced_operand",
+      "parser_method": "_parse_ident_layer_ref",
+      "priority": 60,
+      "tags": [
+        "spaced_operand_before_paren"
+      ]
+    },
+    {
+      "name": "stamp",
+      "parser_method": "_parse_stamp_nud",
+      "priority": 50,
+      "tags": [
+        "stamp"
+      ]
+    },
+    {
+      "name": "generic_prefix_operation",
+      "parser_method": "_parse_generic_operation_nud",
+      "priority": 40,
+      "tags": [
+        "generic_prefix_op"
+      ]
+    },
+    {
+      "name": "layer_ref",
+      "parser_method": "_parse_ident_layer_ref",
+      "priority": 0,
+      "tags": [
+        "layer_ref"
+      ]
+    }
+  ],
+  "generated_from": [
+    "svrf_parser.expression_schema"
+  ],
+  "manual_root": "$SVRF_MANUAL_ROOT",
+  "schema_version": 1
+}

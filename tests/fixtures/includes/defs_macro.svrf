@@ -1,0 +1,3 @@
+DMACRO MY_MACRO P {
+  LAYER M1 10
+}

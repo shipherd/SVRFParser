@@ -58,6 +58,9 @@ class AstVisitor:
     def visit_DMacro(self, node):
         return self.generic_visit(node)
 
+    def visit_MacroCall(self, node):
+        return self.generic_visit(node)
+
     def visit_Define(self, node):
         return self.generic_visit(node)
 

@@ -1,0 +1,254 @@
+{
+  "entries": [
+    {
+      "allow_nonstatement_expression_newline": false,
+      "bracket_modifier_mode": "none",
+      "family": "fixed",
+      "head_prefix": [
+        "DEVICE",
+        "LAYER"
+      ],
+      "modifier_family": "default",
+      "name": "DEVICE LAYER",
+      "parenthesized_scalar_modifiers": false,
+      "parse_strategy": "device_layer"
+    },
+    {
+      "allow_nonstatement_expression_newline": false,
+      "bracket_modifier_mode": "none",
+      "family": "fixed",
+      "head_prefix": [
+        "PATHCHK"
+      ],
+      "modifier_family": "default",
+      "name": "PATHCHK",
+      "parenthesized_scalar_modifiers": false,
+      "parse_strategy": "pathchk"
+    },
+    {
+      "allow_nonstatement_expression_newline": false,
+      "bracket_modifier_mode": "none",
+      "family": "fixed",
+      "head_prefix": [
+        "ENC",
+        "RECTANGLE"
+      ],
+      "modifier_family": "default",
+      "name": "ENC RECTANGLE",
+      "parenthesized_scalar_modifiers": false,
+      "parse_strategy": "default"
+    },
+    {
+      "allow_nonstatement_expression_newline": false,
+      "bracket_modifier_mode": "none",
+      "family": "fixed",
+      "head_prefix": [
+        "ENCLOSE",
+        "RECTANGLE"
+      ],
+      "modifier_family": "default",
+      "name": "ENCLOSE RECTANGLE",
+      "parenthesized_scalar_modifiers": false,
+      "parse_strategy": "default"
+    },
+    {
+      "allow_nonstatement_expression_newline": false,
+      "bracket_modifier_mode": "none",
+      "family": "fixed",
+      "head_prefix": [
+        "RECTANGLE",
+        "ENCLOSURE"
+      ],
+      "modifier_family": "default",
+      "name": "RECTANGLE ENCLOSURE",
+      "parenthesized_scalar_modifiers": false,
+      "parse_strategy": "default"
+    },
+    {
+      "allow_nonstatement_expression_newline": false,
+      "bracket_modifier_mode": "none",
+      "family": "fixed",
+      "head_prefix": [
+        "EXPAND",
+        "EDGE"
+      ],
+      "modifier_family": "default",
+      "name": "EXPAND EDGE",
+      "parenthesized_scalar_modifiers": false,
+      "parse_strategy": "default"
+    },
+    {
+      "allow_nonstatement_expression_newline": false,
+      "bracket_modifier_mode": "none",
+      "family": "fixed",
+      "head_prefix": [
+        "CONVEX",
+        "EDGE"
+      ],
+      "modifier_family": "default",
+      "name": "CONVEX EDGE",
+      "parenthesized_scalar_modifiers": false,
+      "parse_strategy": "default"
+    },
+    {
+      "allow_nonstatement_expression_newline": false,
+      "bracket_modifier_mode": "none",
+      "family": "fixed",
+      "head_prefix": [
+        "PATH",
+        "LENGTH"
+      ],
+      "modifier_family": "default",
+      "name": "PATH LENGTH",
+      "parenthesized_scalar_modifiers": false,
+      "parse_strategy": "default"
+    },
+    {
+      "allow_nonstatement_expression_newline": false,
+      "bracket_modifier_mode": "none",
+      "family": "fixed",
+      "head_prefix": [
+        "NET",
+        "AREA",
+        "RATIO"
+      ],
+      "modifier_family": "default",
+      "name": "NET AREA RATIO",
+      "parenthesized_scalar_modifiers": false,
+      "parse_strategy": "default"
+    },
+    {
+      "allow_nonstatement_expression_newline": false,
+      "bracket_modifier_mode": "none",
+      "family": "fixed",
+      "head_prefix": [
+        "NET",
+        "AREA"
+      ],
+      "modifier_family": "default",
+      "name": "NET AREA",
+      "parenthesized_scalar_modifiers": false,
+      "parse_strategy": "default"
+    },
+    {
+      "allow_nonstatement_expression_newline": false,
+      "bracket_modifier_mode": "none",
+      "family": "fixed",
+      "head_prefix": [
+        "NET",
+        "INTERACT"
+      ],
+      "modifier_family": "default",
+      "name": "NET INTERACT",
+      "parenthesized_scalar_modifiers": false,
+      "parse_strategy": "default"
+    },
+    {
+      "allow_nonstatement_expression_newline": false,
+      "bracket_modifier_mode": "none",
+      "family": "fixed",
+      "head_prefix": [
+        "WITH",
+        "AREA"
+      ],
+      "modifier_family": "default",
+      "name": "WITH AREA",
+      "parenthesized_scalar_modifiers": false,
+      "parse_strategy": "default"
+    },
+    {
+      "allow_nonstatement_expression_newline": false,
+      "bracket_modifier_mode": "none",
+      "family": "fixed",
+      "head_prefix": [
+        "WITH",
+        "EDGE"
+      ],
+      "modifier_family": "default",
+      "name": "WITH EDGE",
+      "parenthesized_scalar_modifiers": false,
+      "parse_strategy": "default"
+    },
+    {
+      "allow_nonstatement_expression_newline": false,
+      "bracket_modifier_mode": "none",
+      "family": "fixed",
+      "head_prefix": [
+        "WITH",
+        "LENGTH"
+      ],
+      "modifier_family": "default",
+      "name": "WITH LENGTH",
+      "parenthesized_scalar_modifiers": false,
+      "parse_strategy": "default"
+    },
+    {
+      "allow_nonstatement_expression_newline": false,
+      "bracket_modifier_mode": "none",
+      "family": "fixed",
+      "head_prefix": [
+        "WITH",
+        "NEIGHBOR"
+      ],
+      "modifier_family": "default",
+      "name": "WITH NEIGHBOR",
+      "parenthesized_scalar_modifiers": false,
+      "parse_strategy": "default"
+    },
+    {
+      "allow_nonstatement_expression_newline": false,
+      "bracket_modifier_mode": "none",
+      "family": "fixed",
+      "head_prefix": [
+        "WITH",
+        "TEXT"
+      ],
+      "modifier_family": "default",
+      "name": "WITH TEXT",
+      "parenthesized_scalar_modifiers": false,
+      "parse_strategy": "default"
+    },
+    {
+      "allow_nonstatement_expression_newline": false,
+      "bracket_modifier_mode": "none",
+      "family": "fixed",
+      "head_prefix": [
+        "WITH",
+        "WIDTH"
+      ],
+      "modifier_family": "default",
+      "name": "WITH WIDTH",
+      "parenthesized_scalar_modifiers": false,
+      "parse_strategy": "default"
+    },
+    {
+      "allow_nonstatement_expression_newline": false,
+      "bracket_modifier_mode": "none",
+      "family": "ret",
+      "head_prefix": [
+        "RET"
+      ],
+      "modifier_family": "ret",
+      "name": "RET",
+      "parenthesized_scalar_modifiers": false,
+      "parse_strategy": "default"
+    },
+    {
+      "allow_nonstatement_expression_newline": false,
+      "bracket_modifier_mode": "none",
+      "family": "dfm",
+      "head_prefix": [
+        "DFM"
+      ],
+      "modifier_family": "default",
+      "name": "DFM",
+      "parenthesized_scalar_modifiers": false,
+      "parse_strategy": "default"
+    }
+  ],
+  "generated_from": [
+    "svrf_parser.operation_schema"
+  ],
+  "manual_root": "$SVRF_MANUAL_ROOT",
+  "schema_version": 1
+}

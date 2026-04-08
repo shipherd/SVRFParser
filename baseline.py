@@ -1,6 +1,6 @@
 """Baseline metrics collector for SVRF parser.
 
-Parses all sample files and produces a JSON report + console summary
+Parses all candidate sample files and produces a JSON report + console summary
 with per-file statistics: size, parse time, statement count, warning count,
 AST node type distribution, and SVRF node ratio.
 """
@@ -16,19 +16,11 @@ from pathlib import Path
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from svrf_parser import parse_with_diagnostics
-from svrf_parser.ast_nodes import *
+from sample_corpus import iter_sample_files
+from svrf_parser.svrf_constructs import count_svrf_constructs
 
 SAMPLES_DIR = None
 REPORT_PATH = Path(__file__).parent / "baseline_report.json"
-
-_SVRF_NODE_TYPES = (
-    LayerDef, LayerMap, LayerAssignment,
-    Directive, RuleCheckBlock,
-    Connect, Device, DMacro,
-    Define, IfDef, Include, EncryptedBlock,
-    Group, Attach, TraceProperty,
-    VariableDef,
-)
 
 # Warning category patterns
 _WARNING_CATEGORIES = {
@@ -37,88 +29,46 @@ _WARNING_CATEGORIES = {
     "unrecognized": re.compile(r"Unrecognized"),
 }
 
+_WARNING_CODE_CATEGORIES = {
+    "parser.assignment.empty": "assignment_empty",
+    "parser.connect.expected_also": "connect_expected_also",
+    "parser.parse_error": "parse_error",
+    "parser.stuck": "parser_stuck",
+    "parser.unrecognized_statement": "unrecognized",
+}
+
 
 def walk_ast(node):
-    """Depth-first traversal of all AST nodes."""
-    yield node
-    if isinstance(node, Program):
-        for s in node.statements:
-            yield from walk_ast(s)
-    elif isinstance(node, (IfDef,)):
-        for s in node.then_body:
-            yield from walk_ast(s)
-        for s in node.else_body:
-            yield from walk_ast(s)
-    elif isinstance(node, RuleCheckBlock):
-        for s in node.body:
-            yield from walk_ast(s)
-        if node.description:
-            yield from walk_ast(node.description)
-    elif isinstance(node, DMacro):
-        for s in node.body:
-            yield from walk_ast(s)
-    elif isinstance(node, PropertyBlock):
-        for s in node.body:
-            yield from walk_ast(s)
-    elif isinstance(node, IfExpr):
-        if node.condition:
-            yield from walk_ast(node.condition)
-        for s in node.then_body:
-            yield from walk_ast(s)
-        for cond, body in node.elseifs:
-            yield from walk_ast(cond)
-            for s in body:
-                yield from walk_ast(s)
-        for s in node.else_body:
-            yield from walk_ast(s)
-    elif isinstance(node, BinaryOp):
-        if node.left:
-            yield from walk_ast(node.left)
-        if node.right:
-            yield from walk_ast(node.right)
-    elif isinstance(node, UnaryOp):
-        if node.operand:
-            yield from walk_ast(node.operand)
-    elif isinstance(node, ConstrainedExpr):
-        if node.expr:
-            yield from walk_ast(node.expr)
-        for c in node.constraints:
-            yield from walk_ast(c)
-    elif isinstance(node, DRCOp):
-        for o in node.operands:
-            if isinstance(o, AstNode):
-                yield from walk_ast(o)
-        for c in node.constraints:
-            yield from walk_ast(c)
-    elif isinstance(node, LayerAssignment):
-        if node.expression:
-            yield from walk_ast(node.expression)
-    elif isinstance(node, FuncCall):
-        for a in node.args:
-            if isinstance(a, AstNode):
-                yield from walk_ast(a)
-    elif isinstance(node, Directive):
-        if node.property_block:
-            yield from walk_ast(node.property_block)
-    elif isinstance(node, VariableDef):
-        if node.expr:
-            yield from walk_ast(node.expr)
+    """Yield AST nodes using the parser's canonical iterative traversal."""
+
+    yield from node.walk()
 
 
 def categorize_warnings(warnings):
     """Group warnings by category."""
-    cats = {k: [] for k in _WARNING_CATEGORIES}
-    cats["other"] = []
-    for w in warnings:
+    cats = {k: 0 for k in (*_WARNING_CATEGORIES, *_WARNING_CODE_CATEGORIES.values())}
+    cats["parser_other"] = 0
+    cats["other"] = 0
+    for warning in warnings:
+        code = getattr(warning, "code", "") or ""
+        code_category = _WARNING_CODE_CATEGORIES.get(code)
+        if code_category is not None:
+            cats[code_category] += 1
+            continue
+        if code.startswith("parser."):
+            cats["parser_other"] += 1
+            continue
+
+        text = str(warning)
         matched = False
         for cat, pat in _WARNING_CATEGORIES.items():
-            if pat.search(w):
-                cats[cat].append(w)
+            if pat.search(text):
+                cats[cat] += 1
                 matched = True
                 break
         if not matched:
-            cats["other"].append(w)
-    return {k: len(v) for k, v in cats.items()}
+            cats["other"] += 1
+    return cats
 
 
 def analyze_file(path):
@@ -131,9 +81,7 @@ def analyze_file(path):
     elapsed = time.time() - t0
 
     n_stmts = len(tree.statements)
-    svrf_count = sum(
-        1 for s in tree.statements if isinstance(s, _SVRF_NODE_TYPES)
-    )
+    svrf_count = count_svrf_constructs(tree.statements)
     ratio = svrf_count / n_stmts if n_stmts else 0
 
     # Node type distribution
@@ -155,28 +103,24 @@ def analyze_file(path):
 
 
 def find_sample_files():
-    """Find all sample files under SAMPLES_DIR."""
-    files = []
-    for dirpath, _, filenames in os.walk(SAMPLES_DIR):
-        for fn in sorted(filenames):
-            files.append(os.path.join(dirpath, fn))
-    return files
+    """Find candidate SVRF sample files from SAMPLES_DIR."""
+    return [str(path) for path in iter_sample_files(SAMPLES_DIR)]
 
 
 def main():
-    if not SAMPLES_DIR.is_dir():
-        print(f"Samples directory not found: {SAMPLES_DIR}")
+    if not SAMPLES_DIR.exists() or not (SAMPLES_DIR.is_dir() or SAMPLES_DIR.is_file()):
+        print(f"Sample file or directory not found: {SAMPLES_DIR}")
         return 1
 
     files = find_sample_files()
-    print(f"Found {len(files)} sample files in {SAMPLES_DIR}\n")
+    print(f"Found {len(files)} candidate files in {SAMPLES_DIR}\n")
 
     results = []
     total_warnings = 0
     total_stmts = 0
 
     for path in files:
-        rel = os.path.relpath(path, SAMPLES_DIR)
+        rel = os.path.relpath(path, SAMPLES_DIR) if SAMPLES_DIR.is_dir() else Path(path).name
         try:
             metrics = analyze_file(path)
             results.append(metrics)
@@ -223,7 +167,7 @@ def main():
 
 if __name__ == '__main__':
     if len(sys.argv) < 2:
-        print("Usage: python baseline.py <samples_dir>")
+        print("Usage: python baseline.py <samples_dir_or_file>")
         sys.exit(1)
     SAMPLES_DIR = Path(sys.argv[1])
     sys.exit(main())

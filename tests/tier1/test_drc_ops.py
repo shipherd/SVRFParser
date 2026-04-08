@@ -1,5 +1,6 @@
 """Tier 1 unit tests: DRC operations."""
 
+import unittest
 import sys
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
@@ -8,7 +9,7 @@ from tests.helpers import parse_expr, assert_node_type
 from svrf_parser.ast_nodes import *
 
 
-class TestDRCBasic:
+class TestDRCBasic(unittest.TestCase):
     def test_int_basic(self):
         node = parse_expr("INT M1 < 0.1")
         assert_node_type(node, DRCOp, op="INT")
@@ -37,7 +38,7 @@ class TestDRCBasic:
         assert_node_type(node, DRCOp, op="DENSITY")
 
 
-class TestDRCModifiers:
+class TestDRCModifiers(unittest.TestCase):
     def test_drc_with_modifiers(self):
         node = parse_expr("INT M1 < 0.1 OPPOSITE REGION")
         assert_node_type(node, DRCOp, op="INT")
@@ -48,7 +49,7 @@ class TestDRCModifiers:
         assert_node_type(node, DRCOp, op="INT")
 
 
-class TestOffgrid:
+class TestOffgrid(unittest.TestCase):
     def test_offgrid_basic(self):
         node = parse_expr("OFFGRID M1 (100) (50) INSIDE OF LAYER M2 ABSOLUTE")
         assert_node_type(node, DRCOp, op="OFFGRID")
@@ -58,16 +59,18 @@ class TestOffgrid:
         assert "LAYER" in node.modifiers
 
 
-class TestRotate:
+class TestRotate(unittest.TestCase):
     def test_rotate_by(self):
         node = parse_expr("ROTATE M1 BY 45")
         assert_node_type(node, DRCOp, op="ROTATE")
         assert len(node.operands) == 1
-        assert "BY" in node.modifiers
-        assert "45" in node.modifiers
+        by_items = [m for m in node.modifiers if isinstance(m, tuple) and m[0] == 'BY']
+        assert len(by_items) == 1
+        assert isinstance(by_items[0][1], NumberLiteral)
+        assert by_items[0][1].value == 45
 
 
-class TestExpandEdgeLED:
+class TestExpandEdgeLED(unittest.TestCase):
     def test_expand_edge_postfix(self):
         node = parse_expr("(LENGTH M1 < 0.238) EXPAND EDGE INSIDE BY 0.001")
         assert_node_type(node, DRCOp, op="EXPAND EDGE")
@@ -81,7 +84,7 @@ class TestExpandEdgeLED:
         assert "OUTSIDE" in mod_strs
 
 
-class TestDeviceLayer:
+class TestDeviceLayer(unittest.TestCase):
     def test_device_layer(self):
         node = parse_expr("DEVICE LAYER MN(nmos) ANNOTATE AA_netid")
         assert_node_type(node, DRCOp, op="DEVICE LAYER")
@@ -89,7 +92,7 @@ class TestDeviceLayer:
         assert "ANNOTATE" in node.modifiers
 
 
-class TestRectangleConstraints:
+class TestRectangleConstraints(unittest.TestCase):
     def test_rectangle_no_operand(self):
         """RECTANGLE == val BY == val (no operand before constraints)."""
         node = parse_expr("NOT RECTANGLE == 4.128 BY == 4.128 ORTHOGONAL ONLY")
@@ -109,7 +112,7 @@ class TestRectangleConstraints:
         assert "ASPECT" in mod_strs
 
 
-class TestAbutAngle:
+class TestAbutAngle(unittest.TestCase):
     def test_abut_90(self):
         node = parse_expr("INT M1 < 0.12 ABUT<90> SINGULAR REGION")
         assert isinstance(node, DRCOp)
@@ -128,7 +131,7 @@ class TestAbutAngle:
         assert 'ABUT<180>' in node.modifiers
 
 
-class TestPerimeter:
+class TestPerimeter(unittest.TestCase):
     def test_perimeter_prefix(self):
         node = parse_expr("PERIMETER M1 > 5.0")
         assert isinstance(node, ConstrainedExpr)

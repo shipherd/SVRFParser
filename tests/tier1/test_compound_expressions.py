@@ -1,5 +1,6 @@
 """Tier 1 unit tests: Complex compound expressions and edge cases."""
 
+import unittest
 import sys
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
@@ -8,7 +9,7 @@ from tests.helpers import parse_expr, parse_one, assert_node_type, collect_warni
 from svrf_parser.ast_nodes import *
 
 
-class TestDeepNesting:
+class TestDeepNesting(unittest.TestCase):
     def test_triple_nested_boolean(self):
         node = parse_expr("((A AND B) OR C) NOT D")
         assert isinstance(node, BinaryOp)
@@ -42,7 +43,7 @@ class TestDeepNesting:
         assert isinstance(node.left, BinaryOp)
 
 
-class TestSyntheticPatterns:
+class TestSyntheticPatterns(unittest.TestCase):
     """Synthetic combinations of compound expression syntax."""
 
     def test_complex_not_chain(self):
@@ -84,7 +85,7 @@ class TestSyntheticPatterns:
         assert node.op == "DENSITY"
 
 
-class TestNegativeCases:
+class TestNegativeCases(unittest.TestCase):
     def test_unclosed_paren_no_crash(self):
         """Parser should not crash on unclosed parens."""
         warnings = collect_warnings("X = (A AND B")

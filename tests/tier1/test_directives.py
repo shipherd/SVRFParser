@@ -1,5 +1,6 @@
 """Tier 1 unit tests: Directives."""
 
+import unittest
 import sys
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
@@ -8,7 +9,7 @@ from tests.helpers import parse_one, parse_expr, assert_node_type, collect_warni
 from svrf_parser.ast_nodes import *
 
 
-class TestDirectives:
+class TestDirectives(unittest.TestCase):
     def test_layout_path(self):
         node = parse_one('LAYOUT PATH "design.gds"')
         assert_node_type(node, Directive)
@@ -47,25 +48,24 @@ class TestDirectives:
         assert_node_type(node, Directive)
 
 
-class TestVariable:
+class TestVariable(unittest.TestCase):
     def test_variable(self):
         node = parse_one("VARIABLE WIDTH 0.1")
         assert_node_type(node, VariableDef, name="WIDTH")
 
 
-class TestRdbDirective:
+class TestRdbDirective(unittest.TestCase):
     def test_rdb_basic(self):
         node = parse_one('RDB "./output/report.RDB" M1 GATE')
         assert_node_type(node, Directive)
         assert "RDB" in [k.upper() for k in node.keywords]
 
 
-class TestCmacroInvocation:
+class TestCmacroInvocation(unittest.TestCase):
     def test_cmacro_basic(self):
         node = parse_one("CMACRO VOLTAGE_ANNOTATE_2 LAYER1 NET_PROP LAYER1_v")
-        assert_node_type(node, Directive)
-        assert node.keywords == ['CMACRO']
-        assert node.arguments == ['VOLTAGE_ANNOTATE_2', 'LAYER1', 'NET_PROP', 'LAYER1_v']
+        assert_node_type(node, MacroCall, kind="CMACRO", name="VOLTAGE_ANNOTATE_2")
+        assert [arg.name for arg in node.arguments] == ['LAYER1', 'NET_PROP', 'LAYER1_V']
 
     def test_cmacro_no_warnings(self):
         warnings = collect_warnings("CMACRO MY_MACRO ARG1 ARG2")
@@ -73,17 +73,16 @@ class TestCmacroInvocation:
 
     def test_cmacro_single_arg(self):
         node = parse_one("CMACRO extract_params")
-        assert_node_type(node, Directive)
-        assert node.keywords == ['CMACRO']
-        assert node.arguments == ['extract_params']
+        assert_node_type(node, MacroCall, kind="CMACRO", name="EXTRACT_PARAMS")
+        assert node.arguments == []
 
 
-class TestPolygon:
+class TestPolygon(unittest.TestCase):
     def test_polygon_basic(self):
         node = parse_one("POLYGON xLB yLB xRT yRT ChipWindow")
         assert_node_type(node, Directive)
         assert node.keywords == ['POLYGON']
-        assert node.arguments == ['xLB', 'yLB', 'xRT', 'yRT', 'ChipWindow']
+        assert node.arguments == ['XLB', 'YLB', 'XRT', 'YRT', 'CHIPWINDOW']
 
     def test_polygon_no_warnings(self):
         warnings = collect_warnings("POLYGON x1 y1 x2 y2 region")

@@ -1,5 +1,6 @@
 """Tier 1 unit tests: Edge operations."""
 
+import unittest
 import sys
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
@@ -8,19 +9,19 @@ from tests.helpers import parse_expr, assert_node_type
 from svrf_parser.ast_nodes import *
 
 
-class TestConvexEdge:
+class TestConvexEdge(unittest.TestCase):
     def test_convex_edge(self):
         node = parse_expr("CONVEX EDGE M1 ANGLE >= 90")
         assert_node_type(node, DRCOp, op="CONVEX EDGE")
 
 
-class TestExpandEdge:
+class TestExpandEdge(unittest.TestCase):
     def test_expand_edge(self):
         node = parse_expr("EXPAND EDGE M1 INSIDE BY 0.1")
         assert_node_type(node, DRCOp, op="EXPAND EDGE")
 
 
-class TestMeasurementPrefix:
+class TestMeasurementPrefix(unittest.TestCase):
     def test_angle_prefix(self):
         node = parse_expr("ANGLE M1 == 45")
         assert_node_type(node, ConstrainedExpr)

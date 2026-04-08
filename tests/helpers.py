@@ -8,7 +8,7 @@ from typing import Iterator
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from svrf_parser import parse, parse_with_diagnostics
-from svrf_parser.ast_nodes import *
+from svrf_parser.ast_nodes import AstNode, LayerAssignment, Program
 
 
 def parse_one(text: str) -> AstNode:
@@ -38,73 +38,9 @@ def assert_node_type(node, expected_type, **field_checks):
 
 
 def walk_ast(node) -> Iterator:
-    """Depth-first traversal of all AST nodes."""
-    yield node
-    if isinstance(node, Program):
-        for s in node.statements:
-            yield from walk_ast(s)
-    elif isinstance(node, IfDef):
-        for s in node.then_body:
-            yield from walk_ast(s)
-        for s in node.else_body:
-            yield from walk_ast(s)
-    elif isinstance(node, RuleCheckBlock):
-        for s in node.body:
-            yield from walk_ast(s)
-        if node.description:
-            for line_segs in node.description:
-                for seg in line_segs:
-                    if isinstance(seg, AstNode):
-                        yield from walk_ast(seg)
-    elif isinstance(node, DMacro):
-        for s in node.body:
-            yield from walk_ast(s)
-    elif isinstance(node, PropertyBlock):
-        for s in node.body:
-            yield from walk_ast(s)
-    elif isinstance(node, IfExpr):
-        if node.condition:
-            yield from walk_ast(node.condition)
-        for s in node.then_body:
-            yield from walk_ast(s)
-        for cond, body in node.elseifs:
-            yield from walk_ast(cond)
-            for s in body:
-                yield from walk_ast(s)
-        for s in node.else_body:
-            yield from walk_ast(s)
-    elif isinstance(node, BinaryOp):
-        if node.left:
-            yield from walk_ast(node.left)
-        if node.right:
-            yield from walk_ast(node.right)
-    elif isinstance(node, UnaryOp):
-        if node.operand:
-            yield from walk_ast(node.operand)
-    elif isinstance(node, ConstrainedExpr):
-        if node.expr:
-            yield from walk_ast(node.expr)
-        for c in node.constraints:
-            yield from walk_ast(c)
-    elif isinstance(node, DRCOp):
-        for o in node.operands:
-            if isinstance(o, AstNode):
-                yield from walk_ast(o)
-        for c in node.constraints:
-            yield from walk_ast(c)
-    elif isinstance(node, LayerAssignment):
-        if node.expression:
-            yield from walk_ast(node.expression)
-    elif isinstance(node, FuncCall):
-        for a in node.args:
-            if isinstance(a, AstNode):
-                yield from walk_ast(a)
-    elif isinstance(node, Directive):
-        if node.property_block:
-            yield from walk_ast(node.property_block)
-    elif isinstance(node, VariableDef):
-        if node.expr:
-            yield from walk_ast(node.expr)
+    """Yield AST nodes using the parser's canonical iterative traversal."""
+
+    yield from node.walk()
 
 
 def count_node_types(tree: Program) -> Counter:
@@ -125,38 +61,4 @@ def ast_equal(a, b) -> bool:
     """
     if type(a) != type(b):
         return False
-    if isinstance(a, Program):
-        if len(a.statements) != len(b.statements):
-            return False
-        return all(ast_equal(x, y) for x, y in zip(a.statements, b.statements))
-    # Compare all __slots__ except line/col
-    for cls in type(a).__mro__:
-        for slot in getattr(cls, '__slots__', ()):
-            if slot in ('line', 'col'):
-                continue
-            va = getattr(a, slot, None)
-            vb = getattr(b, slot, None)
-            if isinstance(va, AstNode) and isinstance(vb, AstNode):
-                if not ast_equal(va, vb):
-                    return False
-            elif isinstance(va, list) and isinstance(vb, list):
-                if len(va) != len(vb):
-                    return False
-                for x, y in zip(va, vb):
-                    if isinstance(x, AstNode) and isinstance(y, AstNode):
-                        if not ast_equal(x, y):
-                            return False
-                    elif isinstance(x, tuple) and isinstance(y, tuple):
-                        if len(x) != len(y):
-                            return False
-                        for tx, ty in zip(x, y):
-                            if isinstance(tx, AstNode) and isinstance(ty, AstNode):
-                                if not ast_equal(tx, ty):
-                                    return False
-                            elif tx != ty:
-                                return False
-                    elif x != y:
-                        return False
-            elif va != vb:
-                return False
-    return True
+    return a.structurally_equal(b, include_position=False)

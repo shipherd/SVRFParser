@@ -1,0 +1,57 @@
+{
+  "entries": [
+    {
+      "category": "generic_semantics",
+      "emit_warning": true,
+      "feature_name": "polygon_directive",
+      "message": "POLYGON directives are recognized, but only generic parsing and limited semantic handling are implemented",
+      "name": "polygon_directive",
+      "tags": [
+        "generic_semantics",
+        "manual_review"
+      ],
+      "warning_code": "validation.support.limited_feature"
+    },
+    {
+      "category": "generic_semantics",
+      "emit_warning": true,
+      "feature_name": "rdb_directive",
+      "message": "Top-level RDB directives are recognized, but only generic parsing and limited semantic handling are implemented",
+      "name": "rdb_directive",
+      "tags": [
+        "generic_semantics",
+        "manual_review"
+      ],
+      "warning_code": "validation.support.limited_feature"
+    },
+    {
+      "category": "embedded_language",
+      "emit_warning": true,
+      "feature_name": "tvf_directive",
+      "message": "TVF built-in language constructs are recognized, but TVF bodies are not semantically interpreted beyond generic directive parsing",
+      "name": "tvf_directive",
+      "tags": [
+        "embedded_language",
+        "manual_review"
+      ],
+      "warning_code": "validation.support.limited_feature"
+    },
+    {
+      "category": "opaque_content",
+      "emit_warning": false,
+      "feature_name": "encrypted_block",
+      "message": "Encrypted SVRF blocks are treated as opaque content; definitions inside them are not available to semantic validation",
+      "name": "encrypted_block",
+      "tags": [
+        "manual_review",
+        "opaque_content"
+      ],
+      "warning_code": "validation.support.opaque_content"
+    }
+  ],
+  "generated_from": [
+    "svrf_parser.support_notice"
+  ],
+  "manual_root": "$SVRF_MANUAL_ROOT",
+  "schema_version": 1
+}

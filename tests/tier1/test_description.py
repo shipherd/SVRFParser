@@ -1,5 +1,6 @@
 """Tier 1 unit tests: Multi-line descriptions and ^VARNAME references."""
 
+import unittest
 import sys
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
@@ -8,7 +9,7 @@ from tests.helpers import parse_one, assert_node_type
 from svrf_parser.ast_nodes import *
 
 
-class TestVarRefNode:
+class TestVarRefNode(unittest.TestCase):
     """VarRef AST node basics."""
 
     def test_varref_exists(self):
@@ -22,13 +23,13 @@ class TestVarRefNode:
         assert hasattr(node, 'accept')
 
 
-class TestSingleLineDescription:
+class TestSingleLineDescription(unittest.TestCase):
     """Rule check blocks with a single @ description line."""
 
     def test_plain_text(self):
         text = "check1 {\n  @ Simple description\n  INT M1 < 0.1\n}"
         node = parse_one(text)
-        assert_node_type(node, RuleCheckBlock, name="check1")
+        assert_node_type(node, RuleCheckBlock, name="CHECK1")
         # description is now a list of lines
         assert isinstance(node.description, list)
         assert len(node.description) == 1
@@ -60,7 +61,7 @@ class TestSingleLineDescription:
         assert var_refs[1].name == 'WIN_H'
 
 
-class TestMultiLineDescription:
+class TestMultiLineDescription(unittest.TestCase):
     """Rule check blocks with multiple @ description lines."""
 
     def test_two_lines(self):
@@ -121,7 +122,7 @@ class TestMultiLineDescription:
         assert node.description is None
 
 
-class TestDescriptionBodySeparation:
+class TestDescriptionBodySeparation(unittest.TestCase):
     """Ensure description lines don't leak into body and vice versa."""
 
     def test_body_after_descriptions(self):
@@ -139,7 +140,7 @@ class TestDescriptionBodySeparation:
         assert len(node.body) >= 2
 
 
-class TestLiteralTextPreservation:
+class TestLiteralTextPreservation(unittest.TestCase):
     """Description text must be preserved verbatim, not re-tokenized."""
 
     def test_numbered_list(self):

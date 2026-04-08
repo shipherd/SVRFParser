@@ -1,0 +1,359 @@
+{
+  "entries": [
+    {
+      "head_prefix": [
+        "TRACE",
+        "PROPERTY"
+      ],
+      "modes": [
+        "top"
+      ],
+      "name": "trace_property",
+      "parse_kinds": [],
+      "parser_method": "_parse_trace_property"
+    },
+    {
+      "head_prefix": [
+        "LAYER"
+      ],
+      "modes": [
+        "top"
+      ],
+      "name": "layer",
+      "parse_kinds": [],
+      "parser_method": "_parse_layer"
+    },
+    {
+      "head_prefix": [
+        "VARIABLE"
+      ],
+      "modes": [
+        "top"
+      ],
+      "name": "variable",
+      "parse_kinds": [],
+      "parser_method": "_parse_variable"
+    },
+    {
+      "head_prefix": [
+        "INCLUDE"
+      ],
+      "modes": [
+        "top"
+      ],
+      "name": "include",
+      "parse_kinds": [],
+      "parser_method": "_parse_include_statement"
+    },
+    {
+      "head_prefix": [
+        "GROUP"
+      ],
+      "modes": [
+        "top"
+      ],
+      "name": "group",
+      "parse_kinds": [],
+      "parser_method": "_parse_group"
+    },
+    {
+      "head_prefix": [
+        "CONNECT"
+      ],
+      "modes": [
+        "top"
+      ],
+      "name": "connect",
+      "parse_kinds": [],
+      "parser_method": "_parse_connect_statement"
+    },
+    {
+      "head_prefix": [
+        "SCONNECT"
+      ],
+      "modes": [
+        "top"
+      ],
+      "name": "sconnect",
+      "parse_kinds": [],
+      "parser_method": "_parse_sconnect_statement"
+    },
+    {
+      "head_prefix": [
+        "DVPARAMS"
+      ],
+      "modes": [
+        "rule",
+        "top"
+      ],
+      "name": "dvparams",
+      "parse_kinds": [],
+      "parser_method": "_parse_simple_keyword_directive"
+    },
+    {
+      "head_prefix": [
+        "DISCONNECT"
+      ],
+      "modes": [
+        "rule",
+        "top"
+      ],
+      "name": "disconnect",
+      "parse_kinds": [],
+      "parser_method": "_parse_simple_keyword_directive"
+    },
+    {
+      "head_prefix": [
+        "RESOLVE"
+      ],
+      "modes": [
+        "rule",
+        "top"
+      ],
+      "name": "resolve",
+      "parse_kinds": [],
+      "parser_method": "_parse_simple_keyword_directive"
+    },
+    {
+      "head_prefix": [
+        "ACTION"
+      ],
+      "modes": [
+        "rule",
+        "top"
+      ],
+      "name": "action",
+      "parse_kinds": [],
+      "parser_method": "_parse_simple_keyword_directive"
+    },
+    {
+      "head_prefix": [
+        "OUTPUT"
+      ],
+      "modes": [
+        "rule",
+        "top"
+      ],
+      "name": "output",
+      "parse_kinds": [],
+      "parser_method": "_parse_simple_keyword_directive"
+    },
+    {
+      "head_prefix": [
+        "ANCHOR"
+      ],
+      "modes": [
+        "rule",
+        "top"
+      ],
+      "name": "anchor",
+      "parse_kinds": [],
+      "parser_method": "_parse_simple_keyword_directive"
+    },
+    {
+      "head_prefix": [
+        "DEVICE"
+      ],
+      "modes": [
+        "top"
+      ],
+      "name": "device",
+      "parse_kinds": [],
+      "parser_method": "_parse_device"
+    },
+    {
+      "head_prefix": [
+        "DMACRO"
+      ],
+      "modes": [
+        "top"
+      ],
+      "name": "dmacro",
+      "parse_kinds": [],
+      "parser_method": "_parse_dmacro"
+    },
+    {
+      "head_prefix": [
+        "CMACRO"
+      ],
+      "modes": [
+        "macro",
+        "property",
+        "rule",
+        "top"
+      ],
+      "name": "cmacro",
+      "parse_kinds": [],
+      "parser_method": "_parse_macro_call"
+    },
+    {
+      "head_prefix": [
+        "FMACRO"
+      ],
+      "modes": [
+        "macro",
+        "property",
+        "rule",
+        "top"
+      ],
+      "name": "fmacro",
+      "parse_kinds": [],
+      "parser_method": "_parse_macro_call"
+    },
+    {
+      "head_prefix": [
+        "ATTACH"
+      ],
+      "modes": [
+        "top"
+      ],
+      "name": "attach",
+      "parse_kinds": [],
+      "parser_method": "_parse_attach"
+    },
+    {
+      "head_prefix": [
+        "POLYGON"
+      ],
+      "modes": [
+        "top"
+      ],
+      "name": "polygon_directive",
+      "parse_kinds": [],
+      "parser_method": "_parse_directive"
+    },
+    {
+      "head_prefix": [
+        "RDB"
+      ],
+      "modes": [
+        "top"
+      ],
+      "name": "rdb_directive",
+      "parse_kinds": [],
+      "parser_method": "_parse_directive"
+    },
+    {
+      "head_prefix": [
+        "TVF"
+      ],
+      "modes": [
+        "top"
+      ],
+      "name": "tvf_directive",
+      "parse_kinds": [],
+      "parser_method": "_parse_directive"
+    },
+    {
+      "head_prefix": [
+        "IF"
+      ],
+      "modes": [
+        "macro",
+        "property"
+      ],
+      "name": "macro_if",
+      "parse_kinds": [],
+      "parser_method": "_parse_if_statement"
+    },
+    {
+      "head_prefix": [],
+      "modes": [
+        "macro",
+        "property",
+        "rule",
+        "top"
+      ],
+      "name": "preprocessor_statement",
+      "parse_kinds": [
+        "preprocessor"
+      ],
+      "parser_method": "_parse_preprocessor_from_cst"
+    },
+    {
+      "head_prefix": [],
+      "modes": [
+        "macro",
+        "property",
+        "rule",
+        "top"
+      ],
+      "name": "property_block_statement",
+      "parse_kinds": [
+        "property_block"
+      ],
+      "parser_method": "_parse_property_block"
+    },
+    {
+      "head_prefix": [],
+      "modes": [
+        "top"
+      ],
+      "name": "rule_check_statement",
+      "parse_kinds": [
+        "rule_check"
+      ],
+      "parser_method": "_parse_rule_check"
+    },
+    {
+      "head_prefix": [],
+      "modes": [
+        "macro",
+        "property",
+        "rule",
+        "top"
+      ],
+      "name": "assignment_statement",
+      "parse_kinds": [
+        "assignment"
+      ],
+      "parser_method": "_parse_assignment"
+    },
+    {
+      "head_prefix": [],
+      "modes": [
+        "macro",
+        "property",
+        "rule",
+        "top"
+      ],
+      "name": "directive_statement",
+      "parse_kinds": [
+        "directive"
+      ],
+      "parser_method": "_parse_directive"
+    },
+    {
+      "head_prefix": [],
+      "modes": [
+        "macro",
+        "property",
+        "rule"
+      ],
+      "name": "rule_mode_statement_head_expression",
+      "parse_kinds": [
+        "statement_head"
+      ],
+      "parser_method": "_parse_expression_statement_from_cst"
+    },
+    {
+      "head_prefix": [],
+      "modes": [
+        "macro",
+        "property",
+        "rule",
+        "top"
+      ],
+      "name": "expression_statement",
+      "parse_kinds": [
+        "expression_statement"
+      ],
+      "parser_method": "_parse_expression_statement_from_cst"
+    }
+  ],
+  "generated_from": [
+    "svrf_parser.statement_schema"
+  ],
+  "manual_root": "$SVRF_MANUAL_ROOT",
+  "schema_version": 1
+}

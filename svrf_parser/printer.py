@@ -48,7 +48,8 @@ class SvrfPrinter:
         return '\n'.join(parts)
 
     def _emit_Include(self, node):
-        return f'#INCLUDE "{node.path}"'
+        keyword = "#INCLUDE" if getattr(node, "preprocessor", False) else "INCLUDE"
+        return f'{keyword} "{node.path}"'
 
     def _emit_EncryptedBlock(self, node):
         return f"#ENCRYPT\n{node.content}\n#ENDCRYPT"
@@ -166,6 +167,15 @@ class SvrfPrinter:
         parts.append("}")
         return '\n'.join(parts)
 
+    def _emit_MacroCall(self, node):
+        parts = [node.kind, node.name]
+        for arg in node.arguments:
+            if isinstance(arg, ast.AstNode):
+                parts.append(self.emit(arg))
+            else:
+                parts.append(str(arg))
+        return ' '.join(parts)
+
     # ---- Property Block ----
 
     def _emit_PropertyBlock(self, node):
@@ -278,3 +288,6 @@ class SvrfPrinter:
 
     def _emit_VarRef(self, node):
         return f"^{node.name}"
+
+    def _emit_ErrorNode(self, node):
+        return node.skipped_text or f"/* {node.message} */"

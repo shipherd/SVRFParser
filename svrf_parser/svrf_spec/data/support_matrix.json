@@ -1,0 +1,116 @@
+{
+  "entries": [
+    {
+      "dialects": [
+        "CORE"
+      ],
+      "feature_family": "rule_file_core",
+      "manual_refs": [
+        "luj1752242843309\\iddc028bbf-ba2d-4d09-b069-717e96433bbb.html"
+      ],
+      "name": "core_rule_file",
+      "note": "Core SVRF rule-file constructs are fully parsed and semantically validated.",
+      "parser_support": "full",
+      "semantic_support": "full",
+      "support_level": "full",
+      "tags": [
+        "stable"
+      ]
+    },
+    {
+      "dialects": [
+        "CORE"
+      ],
+      "feature_family": "preprocessor_control",
+      "manual_refs": [
+        "luj1752242843309\\iddc028bbf-ba2d-4d09-b069-717e96433bbb.html"
+      ],
+      "name": "preprocessor_control",
+      "note": "Core preprocessor directives are parsed and scoped explicitly.",
+      "parser_support": "full",
+      "semantic_support": "full",
+      "support_level": "full",
+      "tags": [
+        "stable"
+      ]
+    },
+    {
+      "dialects": [
+        "DRC"
+      ],
+      "feature_family": "region_definition",
+      "manual_refs": [
+        "luj1752242843309\\iddc028bbf-ba2d-4d09-b069-717e96433bbb.html"
+      ],
+      "name": "polygon_directive",
+      "note": "POLYGON directives are recognized, but only generic semantic handling is implemented.",
+      "parser_support": "full",
+      "semantic_support": "limited",
+      "support_level": "limited",
+      "tags": [
+        "generic_semantics",
+        "manual_review"
+      ]
+    },
+    {
+      "dialects": [
+        "DRC"
+      ],
+      "feature_family": "results_database",
+      "manual_refs": [
+        "luj1752242843309\\iddc028bbf-ba2d-4d09-b069-717e96433bbb.html"
+      ],
+      "name": "rdb_directive",
+      "note": "Top-level RDB directives are recognized, but only generic semantic handling is implemented.",
+      "parser_support": "full",
+      "semantic_support": "limited",
+      "support_level": "limited",
+      "tags": [
+        "generic_semantics",
+        "manual_review"
+      ]
+    },
+    {
+      "dialects": [
+        "TVF"
+      ],
+      "feature_family": "builtin_language",
+      "manual_refs": [
+        "hri1752242863124\\id56178a50-4711-4336-8418-0fc85e03fc23.html"
+      ],
+      "name": "tvf_directive",
+      "note": "TVF constructs are recognized, but TVF bodies are treated as opaque built-in language content.",
+      "parser_support": "full",
+      "semantic_support": "generic_only",
+      "support_level": "limited",
+      "tags": [
+        "embedded_language",
+        "manual_review"
+      ]
+    },
+    {
+      "dialects": [
+        "CORE"
+      ],
+      "feature_family": "opaque_content",
+      "manual_refs": [
+        "luj1752242843309\\iddc028bbf-ba2d-4d09-b069-717e96433bbb.html"
+      ],
+      "name": "encrypted_block",
+      "note": "Encrypted SVRF blocks are preserved structurally but not semantically interpreted.",
+      "parser_support": "full",
+      "semantic_support": "opaque",
+      "support_level": "opaque",
+      "tags": [
+        "manual_review",
+        "opaque_content"
+      ]
+    }
+  ],
+  "generated_from": [
+    "svrf_parser.svrf_spec.manual_sources",
+    "svrf_parser.svrf_spec.manual_overrides"
+  ],
+  "manual_root": "$SVRF_MANUAL_ROOT",
+  "schema_version": 1
+}

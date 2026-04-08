@@ -1,5 +1,6 @@
 """Tier 1 unit tests: Size, Grow, Shrink operations."""
 
+import unittest
 import sys
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
@@ -8,7 +9,7 @@ from tests.helpers import parse_expr, assert_node_type
 from svrf_parser.ast_nodes import *
 
 
-class TestSizeOps:
+class TestSizeOps(unittest.TestCase):
     def test_size_basic(self):
         node = parse_expr("SIZE M1 BY 0.1")
         assert_node_type(node, DRCOp, op="SIZE")
@@ -27,7 +28,7 @@ class TestSizeOps:
         assert_node_type(node, DRCOp, op="SIZE")
 
 
-class TestGrowShrink:
+class TestGrowShrink(unittest.TestCase):
     def test_grow_basic(self):
         node = parse_expr("GROW M1 TOP BY 0.1 BOTTOM BY 0.2")
         assert_node_type(node, DRCOp, op="GROW")
@@ -37,7 +38,7 @@ class TestGrowShrink:
         assert_node_type(node, DRCOp, op="SHRINK")
 
 
-class TestSizeByType:
+class TestSizeByType(unittest.TestCase):
     def test_size_by_modifier_is_tuple(self):
         """SIZE BY value should store ('BY', expr) tuple, not raw AST node."""
         node = parse_expr("SIZE M1 BY 0.5")
@@ -55,7 +56,7 @@ class TestSizeByType:
         assert 'OVERUNDER' in [m for m in node.modifiers if isinstance(m, str)]
 
 
-class TestHolesDonutConsistency:
+class TestHolesDonutConsistency(unittest.TestCase):
     def test_holes_returns_unary_op(self):
         """HOLES should return UnaryOp like DONUT does."""
         node = parse_expr("HOLES M1")

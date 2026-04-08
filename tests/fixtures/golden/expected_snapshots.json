@@ -1,0 +1,217 @@
+{
+  "layer_reference": {
+    "ast": {
+      "statements": [
+        {
+          "name": "M1",
+          "numbers": [
+            1
+          ],
+          "type": "LayerDef"
+        },
+        {
+          "expression": {
+            "left": {
+              "name": "M1",
+              "type": "LayerRef"
+            },
+            "op": "AND",
+            "right": {
+              "name": "MISSING_LAYER",
+              "type": "LayerRef"
+            },
+            "type": "BinaryOp"
+          },
+          "name": "TMP",
+          "type": "LayerAssignment"
+        }
+      ],
+      "type": "Program"
+    },
+    "diagnostic_codes": [
+      "semantic.reference.undefined"
+    ]
+  },
+  "limited_support": {
+    "ast": {
+      "statements": [
+        {
+          "arguments": [
+            "PERC_ADP_PROPERTIES",
+            "[]"
+          ],
+          "keywords": [
+            "TVF",
+            "FUNCTION"
+          ],
+          "property_block": null,
+          "type": "Directive"
+        },
+        {
+          "arguments": [
+            0,
+            0,
+            100,
+            200,
+            "REGION1"
+          ],
+          "keywords": [
+            "POLYGON"
+          ],
+          "property_block": null,
+          "type": "Directive"
+        },
+        {
+          "arguments": [
+            "./output/report.RDB",
+            "M1",
+            "GATE"
+          ],
+          "keywords": [
+            "RDB"
+          ],
+          "property_block": null,
+          "type": "Directive"
+        }
+      ],
+      "type": "Program"
+    },
+    "diagnostic_codes": [
+      "validation.support.limited_feature",
+      "validation.support.limited_feature",
+      "validation.support.limited_feature"
+    ]
+  },
+  "operation_width": {
+    "ast": {
+      "statements": [
+        {
+          "name": "M1",
+          "numbers": [
+            1
+          ],
+          "type": "LayerDef"
+        },
+        {
+          "body": [
+            {
+              "constraints": [
+                {
+                  "op": "<",
+                  "type": "Constraint",
+                  "value": {
+                    "name": "WIDTH_CONST",
+                    "type": "LayerRef"
+                  }
+                }
+              ],
+              "modifiers": [],
+              "op": "INT",
+              "operands": [
+                {
+                  "name": "M1",
+                  "type": "LayerRef"
+                }
+              ],
+              "type": "DRCOp"
+            }
+          ],
+          "comments": null,
+          "name": "RULE_WIDTH",
+          "type": "RuleCheckBlock"
+        }
+      ],
+      "type": "Program"
+    },
+    "diagnostic_codes": [
+      "semantic.reference.scalar_undefined"
+    ]
+  },
+  "ordered_directive_invalid": {
+    "ast": {
+      "statements": [
+        {
+          "arguments": [
+            "VALUES",
+            "NAMES"
+          ],
+          "keywords": [
+            "LVS",
+            "COMPARE",
+            "CASE"
+          ],
+          "property_block": null,
+          "type": "Directive"
+        }
+      ],
+      "type": "Program"
+    },
+    "diagnostic_codes": [
+      "semantic.directive.invalid_value"
+    ]
+  },
+  "ordered_directive_valid": {
+    "ast": {
+      "statements": [
+        {
+          "arguments": [
+            "NAMES",
+            "TYPES",
+            "SUBTYPES",
+            "VALUES"
+          ],
+          "keywords": [
+            "LVS",
+            "COMPARE",
+            "CASE"
+          ],
+          "property_block": null,
+          "type": "Directive"
+        }
+      ],
+      "type": "Program"
+    },
+    "diagnostic_codes": []
+  },
+  "property_scalar": {
+    "ast": {
+      "statements": [
+        {
+          "name": "M1",
+          "numbers": [
+            1
+          ],
+          "type": "LayerDef"
+        },
+        {
+          "body": [
+            {
+              "expression": {
+                "left": {
+                  "name": "WIDTH_CONST",
+                  "type": "LayerRef"
+                },
+                "op": "+",
+                "right": {
+                  "type": "NumberLiteral",
+                  "value": 1
+                },
+                "type": "BinaryOp"
+              },
+              "name": "VALUE",
+              "type": "LayerAssignment"
+            }
+          ],
+          "properties": [
+            "P1"
+          ],
+          "type": "PropertyBlock"
+        }
+      ],
+      "type": "Program"
+    },
+    "diagnostic_codes": [
+      "semantic.reference.scalar_undefined"
+    ]
+  }
+}

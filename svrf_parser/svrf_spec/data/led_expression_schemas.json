@@ -1,0 +1,139 @@
+{
+  "entries": [
+    {
+      "binding_power": 5,
+      "binding_power_source": "static",
+      "name": "comparison_constraint",
+      "parser_method": "_parse_constraint_led_from_schema",
+      "priority": 110,
+      "tags": [
+        "comparison_symbol"
+      ]
+    },
+    {
+      "binding_power": 1,
+      "binding_power_source": "static",
+      "name": "ternary",
+      "parser_method": "_parse_ternary_led",
+      "priority": 100,
+      "tags": [
+        "ternary_question"
+      ]
+    },
+    {
+      "binding_power": 4,
+      "binding_power_source": "static",
+      "name": "equals_symbol",
+      "parser_method": "_parse_symbol_binary_led",
+      "priority": 95,
+      "tags": [
+        "equals_symbol"
+      ]
+    },
+    {
+      "binding_power": null,
+      "binding_power_source": "arithmetic_symbol",
+      "name": "arithmetic_symbol",
+      "parser_method": "_parse_symbol_binary_led",
+      "priority": 90,
+      "tags": [
+        "arithmetic_symbol"
+      ]
+    },
+    {
+      "binding_power": 35,
+      "binding_power_source": "static",
+      "name": "with",
+      "parser_method": "_parse_with_led_from_schema",
+      "priority": 80,
+      "tags": [
+        "with"
+      ]
+    },
+    {
+      "binding_power": 35,
+      "binding_power_source": "static",
+      "name": "measurement",
+      "parser_method": "_parse_measurement_led",
+      "priority": 75,
+      "tags": [
+        "measurement"
+      ]
+    },
+    {
+      "binding_power": 35,
+      "binding_power_source": "static",
+      "name": "holes_or_donut",
+      "parser_method": "_parse_holes_or_donut_led_from_schema",
+      "priority": 70,
+      "tags": [
+        "holes_or_donut"
+      ]
+    },
+    {
+      "binding_power": 35,
+      "binding_power_source": "static",
+      "name": "size",
+      "parser_method": "_parse_size_led_from_schema",
+      "priority": 65,
+      "tags": [
+        "size"
+      ]
+    },
+    {
+      "binding_power": 35,
+      "binding_power_source": "static",
+      "name": "rectangle",
+      "parser_method": "_parse_rectangle_led_from_schema",
+      "priority": 60,
+      "tags": [
+        "rectangle"
+      ]
+    },
+    {
+      "binding_power": 35,
+      "binding_power_source": "static",
+      "name": "expand_or_convex_edge",
+      "parser_method": "_parse_expand_or_convex_edge_led_from_schema",
+      "priority": 55,
+      "tags": [
+        "expand_or_convex_edge"
+      ]
+    },
+    {
+      "binding_power": null,
+      "binding_power_source": "edge_binary",
+      "name": "edge_binary",
+      "parser_method": "_parse_edge_binary_led",
+      "priority": 50,
+      "tags": [
+        "edge_binary"
+      ]
+    },
+    {
+      "binding_power": 30,
+      "binding_power_source": "static",
+      "name": "not_compound",
+      "parser_method": "_parse_not_compound_led_from_schema",
+      "priority": 45,
+      "tags": [
+        "not_compound"
+      ]
+    },
+    {
+      "binding_power": null,
+      "binding_power_source": "infix_ident",
+      "name": "generic_ident",
+      "parser_method": "_parse_generic_infix_led_from_schema",
+      "priority": 0,
+      "tags": [
+        "generic_ident"
+      ]
+    }
+  ],
+  "generated_from": [
+    "svrf_parser.expression_schema"
+  ],
+  "manual_root": "$SVRF_MANUAL_ROOT",
+  "schema_version": 1
+}

@@ -1,0 +1,67 @@
+{
+  "entries": [
+    {
+      "category": "scalar_context",
+      "manual_refs": [
+        "luj1752242843309\\iddc028bbf-ba2d-4d09-b069-717e96433bbb.html"
+      ],
+      "name": "scalar_tuple_heads",
+      "note": "These tuple heads introduce scalar/numeric argument contexts in the current parser and validator.",
+      "tags": [
+        "reviewed_runtime_policy"
+      ],
+      "values": [
+        "BY",
+        "STEP",
+        "WINDOW",
+        "SCALE"
+      ]
+    },
+    {
+      "category": "external_context",
+      "manual_refs": [],
+      "name": "companion_file_suffixes",
+      "note": "Compatibility entry only; current companion scanning considers all regular sibling files and uses no suffix whitelist.",
+      "tags": [
+        "reviewed_runtime_policy"
+      ],
+      "values": []
+    },
+    {
+      "category": "local_scope",
+      "manual_refs": [],
+      "name": "local_scope_kinds",
+      "note": "These locally-scoped symbol classes are intentionally not promoted to global symbol-table definitions.",
+      "tags": [
+        "reviewed_runtime_policy"
+      ],
+      "values": [
+        "rule_check_assignment",
+        "macro_parameter",
+        "property_name",
+        "implicit_device_terminal"
+      ]
+    },
+    {
+      "category": "external_context",
+      "manual_refs": [],
+      "name": "external_unresolved_contexts",
+      "note": "These are the main external-context buckets used when unresolved names have no visible plaintext definition.",
+      "tags": [
+        "reviewed_runtime_policy"
+      ],
+      "values": [
+        "omitted_include",
+        "companion_deck",
+        "tool_runtime_global",
+        "process_setup_parameter"
+      ]
+    }
+  ],
+  "generated_from": [
+    "svrf_parser.svrf_spec.manual_sources",
+    "svrf_parser.svrf_spec.manual_overrides"
+  ],
+  "manual_root": "$SVRF_MANUAL_ROOT",
+  "schema_version": 1
+}

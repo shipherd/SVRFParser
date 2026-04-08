@@ -1,74 +1,58 @@
-"""Token types and Token class for the SVRF lexer."""
+"""Token model for the reconstructed regex-based SVRF lexer."""
 
 from enum import Enum, auto
 
 
 class TokenType(Enum):
-    # Literals
     IDENT = auto()
-    INTEGER = auto()
-    FLOAT = auto()
+    NUMBER = auto()
     STRING = auto()
-
-    # Preprocessor
-    PP_DEFINE = auto()
-    PP_IFDEF = auto()
-    PP_IFNDEF = auto()
-    PP_ELSE = auto()
-    PP_ENDIF = auto()
-    PP_INCLUDE = auto()
-    PP_ENCRYPT = auto()
-    PP_ENDCRYPT = auto()
-    PP_DECRYPT = auto()
-    PP_UNDEFINE = auto()
-
-    # Operators
-    EQUALS = auto()       # =
-    EQEQ = auto()         # ==
-    BANGEQ = auto()        # !=
-    LT = auto()            # <
-    GT_OP = auto()         # >
-    LE = auto()            # <=
-    GE = auto()            # >=
-    BANG = auto()           # !
-    AMPAMP = auto()        # &&
-    PIPEPIPE = auto()      # ||
-    PLUS = auto()          # +
-    MINUS = auto()         # -
-    STAR = auto()          # *
-    SLASH = auto()         # /
-    CARET = auto()         # ^
-    PERCENT = auto()       # %
-    COLONCOLON = auto()    # ::
-    QUESTION = auto()      # ?
-    COLON = auto()         # :
-
-    # Delimiters
-    LPAREN = auto()        # (
-    RPAREN = auto()        # )
-    LBRACE = auto()        # {
-    RBRACE = auto()        # }
-    LBRACKET = auto()      # [
-    RBRACKET = auto()      # ]
-    COMMA = auto()         # ,
-    AT = auto()            # @
-    SEMICOLON = auto()     # ;
-
-    # Special
+    SYMBOL = auto()
+    PREPROCESSOR = auto()
+    ENCRYPTED = auto()
+    RULE_COMMENT = auto()
     NEWLINE = auto()
     EOF = auto()
-    ENCRYPTED = auto()
-    COMMENT_TEXT = auto()  # raw text after @ in rule check descriptions
 
 
 class Token:
-    __slots__ = ('type', 'value', 'line', 'col')
+    __slots__ = (
+        "type",
+        "value",
+        "line",
+        "col",
+        "end_line",
+        "end_col",
+        "offset",
+        "end_offset",
+        "raw",
+    )
 
-    def __init__(self, type: TokenType, value, line: int, col: int):
+    def __init__(
+        self,
+        type,
+        value,
+        line,
+        col,
+        end_line=None,
+        end_col=None,
+        offset=0,
+        end_offset=0,
+        raw=None,
+    ):
         self.type = type
         self.value = value
         self.line = line
         self.col = col
+        self.end_line = line if end_line is None else end_line
+        self.end_col = col if end_col is None else end_col
+        self.offset = offset
+        self.end_offset = end_offset
+        self.raw = value if raw is None else raw
 
     def __repr__(self):
-        return f"Token({self.type.name}, {self.value!r}, L{self.line}:{self.col})"
+        return (
+            f"Token({self.type.name}, {self.value!r}, "
+            f"L{self.line}:{self.col}-L{self.end_line}:{self.end_col}, "
+            f"raw={self.raw!r})"
+        )

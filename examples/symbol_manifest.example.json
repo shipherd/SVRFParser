@@ -1,0 +1,26 @@
+{
+  "external_symbols": [
+    "EXTERNAL_NET",
+    "RUNTIME_LAYER"
+  ],
+  "scalar_parameters": [
+    "LAYER_THICKNESS_M0",
+    "LAYER_THICKNESS_M1"
+  ],
+  "layer_like_symbols": [
+    "OUTPUT_LAYER_A",
+    "OUTPUT_LAYER_B"
+  ],
+  "rules": [
+    {
+      "file_globs": [
+        "*process/*.drc",
+        "*process\\*.drc"
+      ],
+      "scalar_parameters": [
+        "LAYER_THICKNESS_M2",
+        "LAYER_THICKNESS_M3"
+      ]
+    }
+  ]
+}

@@ -1,0 +1,457 @@
+{
+  "ast_entries": [
+    {
+      "dialects": [
+        "CORE"
+      ],
+      "family": "layer_definition",
+      "name": "layer_definition",
+      "node_type": "LayerDef",
+      "support_level": "full",
+      "tags": []
+    },
+    {
+      "dialects": [
+        "CORE"
+      ],
+      "family": "layer_mapping",
+      "name": "layer_map",
+      "node_type": "LayerMap",
+      "support_level": "full",
+      "tags": []
+    },
+    {
+      "dialects": [
+        "CORE"
+      ],
+      "family": "layer_expression",
+      "name": "layer_assignment",
+      "node_type": "LayerAssignment",
+      "support_level": "full",
+      "tags": []
+    },
+    {
+      "dialects": [
+        "CORE"
+      ],
+      "family": "variable_definition",
+      "name": "variable_definition",
+      "node_type": "VariableDef",
+      "support_level": "full",
+      "tags": []
+    },
+    {
+      "dialects": [
+        "CORE"
+      ],
+      "family": "include_control",
+      "name": "include",
+      "node_type": "Include",
+      "support_level": "full",
+      "tags": []
+    },
+    {
+      "dialects": [
+        "CORE"
+      ],
+      "family": "preprocessor_control",
+      "name": "define",
+      "node_type": "Define",
+      "support_level": "full",
+      "tags": []
+    },
+    {
+      "dialects": [
+        "CORE"
+      ],
+      "family": "preprocessor_control",
+      "name": "ifdef",
+      "node_type": "IfDef",
+      "support_level": "full",
+      "tags": []
+    },
+    {
+      "dialects": [
+        "CORE"
+      ],
+      "family": "encrypted_content",
+      "name": "encrypted_block",
+      "node_type": "EncryptedBlock",
+      "support_level": "limited",
+      "tags": [
+        "hidden_plaintext_definitions",
+        "manual_exception"
+      ]
+    },
+    {
+      "dialects": [
+        "DRC"
+      ],
+      "family": "rule_check",
+      "name": "rule_check",
+      "node_type": "RuleCheckBlock",
+      "support_level": "full",
+      "tags": []
+    },
+    {
+      "dialects": [
+        "CORE",
+        "LVS"
+      ],
+      "family": "connectivity",
+      "name": "connect",
+      "node_type": "Connect",
+      "support_level": "full",
+      "tags": []
+    },
+    {
+      "dialects": [
+        "DFM",
+        "LVS"
+      ],
+      "family": "device_extraction",
+      "name": "device",
+      "node_type": "Device",
+      "support_level": "full",
+      "tags": []
+    },
+    {
+      "dialects": [
+        "CORE"
+      ],
+      "family": "macro_definition",
+      "name": "dmacro",
+      "node_type": "DMacro",
+      "support_level": "full",
+      "tags": []
+    },
+    {
+      "dialects": [
+        "CORE"
+      ],
+      "family": "macro_call",
+      "name": "macro_call",
+      "node_type": "MacroCall",
+      "support_level": "full",
+      "tags": []
+    },
+    {
+      "dialects": [
+        "DFM"
+      ],
+      "family": "property_block",
+      "name": "property_block",
+      "node_type": "PropertyBlock",
+      "support_level": "full",
+      "tags": []
+    },
+    {
+      "dialects": [
+        "CORE"
+      ],
+      "family": "group_definition",
+      "name": "group",
+      "node_type": "Group",
+      "support_level": "full",
+      "tags": []
+    },
+    {
+      "dialects": [
+        "LVS"
+      ],
+      "family": "attach",
+      "name": "attach",
+      "node_type": "Attach",
+      "support_level": "full",
+      "tags": []
+    },
+    {
+      "dialects": [
+        "DFM"
+      ],
+      "family": "trace_property",
+      "name": "trace_property",
+      "node_type": "TraceProperty",
+      "support_level": "full",
+      "tags": []
+    }
+  ],
+  "directive_entries": [
+    {
+      "dialects": [
+        "DRC"
+      ],
+      "family": "directive_root",
+      "keywords": [
+        "DRC"
+      ],
+      "name": "drc_root",
+      "support_level": "full",
+      "tags": []
+    },
+    {
+      "dialects": [
+        "ERC"
+      ],
+      "family": "directive_root",
+      "keywords": [
+        "ERC"
+      ],
+      "name": "erc_root",
+      "support_level": "full",
+      "tags": []
+    },
+    {
+      "dialects": [
+        "LVS"
+      ],
+      "family": "directive_root",
+      "keywords": [
+        "LVS"
+      ],
+      "name": "lvs_root",
+      "support_level": "full",
+      "tags": []
+    },
+    {
+      "dialects": [
+        "PEX"
+      ],
+      "family": "directive_root",
+      "keywords": [
+        "PEX"
+      ],
+      "name": "pex_root",
+      "support_level": "full",
+      "tags": []
+    },
+    {
+      "dialects": [
+        "DFM"
+      ],
+      "family": "directive_root",
+      "keywords": [
+        "DFM"
+      ],
+      "name": "dfm_root",
+      "support_level": "full",
+      "tags": []
+    },
+    {
+      "dialects": [
+        "DRC"
+      ],
+      "family": "region_definition",
+      "keywords": [
+        "POLYGON"
+      ],
+      "name": "polygon_directive",
+      "support_level": "limited",
+      "tags": [
+        "generic_semantics"
+      ]
+    },
+    {
+      "dialects": [
+        "DRC"
+      ],
+      "family": "results_database",
+      "keywords": [
+        "RDB"
+      ],
+      "name": "rdb_directive",
+      "support_level": "limited",
+      "tags": [
+        "generic_semantics"
+      ]
+    },
+    {
+      "dialects": [
+        "TVF"
+      ],
+      "family": "builtin_language",
+      "keywords": [
+        "TVF"
+      ],
+      "name": "tvf_directive",
+      "support_level": "limited",
+      "tags": [
+        "embedded_language",
+        "parse_generic"
+      ]
+    },
+    {
+      "dialects": [
+        "LVS"
+      ],
+      "family": "gate_recognition",
+      "keywords": [
+        "LVS",
+        "RECOGNIZE",
+        "GATES"
+      ],
+      "name": "lvs_recognize_gates",
+      "support_level": "full",
+      "tags": [
+        "manual_exception",
+        "ordered_options"
+      ]
+    },
+    {
+      "dialects": [
+        "LVS"
+      ],
+      "family": "spice_netlist_policy",
+      "keywords": [
+        "LVS",
+        "SPICE",
+        "STRICT"
+      ],
+      "name": "lvs_spice_strict",
+      "support_level": "full",
+      "tags": [
+        "manual_exception",
+        "ordered_options"
+      ]
+    },
+    {
+      "dialects": [
+        "PEX"
+      ],
+      "family": "pex_reporting",
+      "keywords": [
+        "PEX",
+        "REPORT",
+        "NETSUMMARY"
+      ],
+      "name": "pex_report_netsummary",
+      "support_level": "full",
+      "tags": [
+        "manual_exception",
+        "ordered_options"
+      ]
+    },
+    {
+      "dialects": [
+        "PEX"
+      ],
+      "family": "pex_reporting",
+      "keywords": [
+        "PEX",
+        "REPORT",
+        "POINT2POINT"
+      ],
+      "name": "pex_report_point2point",
+      "support_level": "full",
+      "tags": [
+        "manual_exception",
+        "ordered_options"
+      ]
+    },
+    {
+      "dialects": [
+        "DRC"
+      ],
+      "family": "results_database",
+      "keywords": [
+        "DRC",
+        "RESULTS",
+        "DATABASE"
+      ],
+      "name": "drc_results_database",
+      "support_level": "full",
+      "tags": [
+        "manual_exception",
+        "ordered_options"
+      ]
+    },
+    {
+      "dialects": [
+        "ERC"
+      ],
+      "family": "results_database",
+      "keywords": [
+        "ERC",
+        "RESULTS",
+        "DATABASE"
+      ],
+      "name": "erc_results_database",
+      "support_level": "full",
+      "tags": [
+        "manual_exception",
+        "ordered_options"
+      ]
+    }
+  ],
+  "generated_from": [
+    "svrf_parser.dialect_profile"
+  ],
+  "manual_root": "$SVRF_MANUAL_ROOT",
+  "operation_entries": [
+    {
+      "dialects": [
+        "DFM"
+      ],
+      "family": "dfm_operation",
+      "head_prefix": [
+        "DFM"
+      ],
+      "name": "dfm_operation",
+      "support_level": "full",
+      "tags": []
+    },
+    {
+      "dialects": [
+        "DFM"
+      ],
+      "family": "results_database",
+      "head_prefix": [
+        "DFM",
+        "RDB"
+      ],
+      "name": "dfm_rdb_operation",
+      "support_level": "full",
+      "tags": [
+        "manual_exception"
+      ]
+    },
+    {
+      "dialects": [
+        "DRC"
+      ],
+      "family": "ret_operation",
+      "head_prefix": [
+        "RET"
+      ],
+      "name": "ret_operation",
+      "support_level": "full",
+      "tags": []
+    },
+    {
+      "dialects": [
+        "DRC"
+      ],
+      "family": "path_check",
+      "head_prefix": [
+        "PATHCHK"
+      ],
+      "name": "pathchk_operation",
+      "support_level": "full",
+      "tags": []
+    },
+    {
+      "dialects": [
+        "DRC"
+      ],
+      "family": "text_filter",
+      "head_prefix": [
+        "WITH",
+        "TEXT"
+      ],
+      "name": "with_text_operation",
+      "support_level": "full",
+      "tags": []
+    }
+  ],
+  "schema_version": 1
+}

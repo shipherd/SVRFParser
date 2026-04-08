@@ -1,5 +1,6 @@
 """Tier 1 unit tests: Expressions."""
 
+import unittest
 import sys
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
@@ -8,7 +9,7 @@ from tests.helpers import parse_expr, assert_node_type
 from svrf_parser.ast_nodes import *
 
 
-class TestConstraints:
+class TestConstraints(unittest.TestCase):
     def test_constraint_chain(self):
         node = parse_expr("M1 > 0.1 < 0.5")
         assert_node_type(node, ConstrainedExpr)
@@ -20,7 +21,7 @@ class TestConstraints:
         assert node.constraints[0].op == "!="
 
 
-class TestWithExpr:
+class TestWithExpr(unittest.TestCase):
     def test_with_width(self):
         node = parse_expr("M1 WITH WIDTH M2 == 0.1")
         assert_node_type(node, ConstrainedExpr)
@@ -33,7 +34,7 @@ class TestWithExpr:
         assert isinstance(node.expr, BinaryOp)
 
 
-class TestMiscExpr:
+class TestMiscExpr(unittest.TestCase):
     def test_net_area_ratio(self):
         node = parse_expr("NET AREA RATIO M1 M2 > 1000")
         assert_node_type(node, DRCOp)

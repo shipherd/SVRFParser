@@ -1,0 +1,60 @@
+{
+  "entries": [
+    {
+      "name": "define",
+      "parser_method": "_parse_define",
+      "tags": [
+        "#DEFINE"
+      ]
+    },
+    {
+      "name": "include",
+      "parser_method": "_parse_pp_include",
+      "tags": [
+        "#INCLUDE"
+      ]
+    },
+    {
+      "name": "undefine",
+      "parser_method": "_parse_undefine",
+      "tags": [
+        "#UNDEFINE"
+      ]
+    },
+    {
+      "name": "conditional",
+      "parser_method": "_parse_ifdef_from_preprocessor",
+      "tags": [
+        "#IFDEF",
+        "#IFDEF_EXP",
+        "#IFNDEF"
+      ]
+    },
+    {
+      "name": "encrypted_block",
+      "parser_method": "_parse_encrypted_block",
+      "tags": [
+        "#DECRYPT",
+        "#ENCRYPT"
+      ]
+    },
+    {
+      "name": "noop",
+      "parser_method": "_consume_noop_preprocessor",
+      "tags": [
+        "#ELSE",
+        "#ENDIF"
+      ]
+    },
+    {
+      "name": "generic",
+      "parser_method": "_parse_preprocessor_directive",
+      "tags": []
+    }
+  ],
+  "generated_from": [
+    "svrf_parser.preprocessor_schema"
+  ],
+  "manual_root": "$SVRF_MANUAL_ROOT",
+  "schema_version": 1
+}

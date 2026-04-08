@@ -1,5 +1,6 @@
 """Tier 1 unit tests: Spatial operations."""
 
+import unittest
 import sys
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
@@ -8,7 +9,7 @@ from tests.helpers import parse_expr, assert_node_type
 from svrf_parser.ast_nodes import *
 
 
-class TestSpatialBinaryOps:
+class TestSpatialBinaryOps(unittest.TestCase):
     def test_inside(self):
         node = parse_expr("M1 INSIDE M2")
         assert_node_type(node, BinaryOp, op="INSIDE")
@@ -40,7 +41,7 @@ class TestSpatialBinaryOps:
         assert node.expr.op == "INTERACT"
 
 
-class TestEdgeBinaryOps:
+class TestEdgeBinaryOps(unittest.TestCase):
     def test_inside_edge(self):
         node = parse_expr("M1 INSIDE EDGE M2")
         assert_node_type(node, BinaryOp, op="INSIDE EDGE")
@@ -58,7 +59,7 @@ class TestEdgeBinaryOps:
         assert_node_type(node, BinaryOp, op="IN EDGE")
 
 
-class TestTouchEdge:
+class TestTouchEdge(unittest.TestCase):
     def test_touch_edge(self):
         node = parse_expr("M1 TOUCH EDGE M2")
         assert_node_type(node, BinaryOp, op="TOUCH EDGE")
@@ -68,7 +69,7 @@ class TestTouchEdge:
         assert_node_type(node, BinaryOp, op="OR EDGE")
 
 
-class TestNotCompound:
+class TestNotCompound(unittest.TestCase):
     def test_not_touch(self):
         node = parse_expr("M1 NOT TOUCH M2")
         assert_node_type(node, BinaryOp, op="NOT TOUCH")

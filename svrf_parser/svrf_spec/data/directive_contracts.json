@@ -1,0 +1,663 @@
+{
+  "entries": [
+    {
+      "clause_sequences": {},
+      "dialect": "LVS",
+      "family": "ordered_options",
+      "keywords": [
+        "LVS",
+        "COMPARE",
+        "CASE"
+      ],
+      "name": "LVS COMPARE CASE",
+      "ordered_values": {
+        "fields": [
+          "NAMES",
+          "TYPES",
+          "SUBTYPES",
+          "VALUES"
+        ]
+      },
+      "value_sets": {}
+    },
+    {
+      "clause_sequences": {
+        "optional_clauses": [
+          [
+            "MIX",
+            "SUBTYPES"
+          ],
+          [
+            "XALSO"
+          ],
+          [
+            "WITHIN",
+            "TOLERANCE"
+          ],
+          [
+            "WITH",
+            "SUBSTRATE"
+          ]
+        ],
+        "trailing_clause": [
+          [
+            "CELL",
+            "LIST"
+          ]
+        ]
+      },
+      "dialect": "LVS",
+      "family": "ordered_optional_clauses",
+      "keywords": [
+        "LVS",
+        "RECOGNIZE",
+        "GATES"
+      ],
+      "name": "LVS RECOGNIZE GATES",
+      "ordered_values": {},
+      "value_sets": {
+        "modes": [
+          "ALL",
+          "NONE",
+          "SIMPLE"
+        ]
+      }
+    },
+    {
+      "clause_sequences": {},
+      "dialect": "LVS",
+      "family": "tolerance",
+      "keywords": [
+        "LVS",
+        "RECOGNIZE",
+        "GATES",
+        "TOLERANCE"
+      ],
+      "name": "LVS RECOGNIZE GATES TOLERANCE",
+      "ordered_values": {
+        "scope_order": [
+          "LAYOUT",
+          "SOURCE"
+        ]
+      },
+      "value_sets": {
+        "scope_keywords": [
+          "LAYOUT",
+          "SOURCE"
+        ],
+        "series_parallel_keywords": [
+          "PARALLEL",
+          "SERIES"
+        ]
+      }
+    },
+    {
+      "clause_sequences": {},
+      "dialect": "LVS",
+      "family": "strict_pair",
+      "keywords": [
+        "LVS",
+        "SPICE",
+        "STRICT"
+      ],
+      "name": "LVS SPICE STRICT",
+      "ordered_values": {},
+      "value_sets": {
+        "fields": [
+          "WL"
+        ],
+        "values": [
+          "NO",
+          "NONE",
+          "YES"
+        ]
+      }
+    },
+    {
+      "clause_sequences": {},
+      "dialect": "LVS",
+      "family": "boolean_suffix",
+      "keywords": [
+        "LVS",
+        "IGNORE",
+        "PORTS"
+      ],
+      "name": "LVS IGNORE PORTS",
+      "ordered_values": {},
+      "value_sets": {
+        "values": [
+          "NO",
+          "YES"
+        ]
+      }
+    },
+    {
+      "clause_sequences": {},
+      "dialect": "LVS",
+      "family": "option_list",
+      "keywords": [
+        "LVS",
+        "REPORT",
+        "OPTION"
+      ],
+      "name": "LVS REPORT OPTION",
+      "ordered_values": {},
+      "value_sets": {
+        "exclusive_options": [
+          "NONE"
+        ],
+        "options": [
+          "A",
+          "AV",
+          "B",
+          "BPE",
+          "BPW",
+          "BV",
+          "BX",
+          "C",
+          "CV",
+          "D",
+          "E",
+          "E1",
+          "EB",
+          "EC",
+          "EERC",
+          "EO",
+          "ES",
+          "F",
+          "FX",
+          "G",
+          "H",
+          "I",
+          "IM",
+          "LPE",
+          "LPW",
+          "MC",
+          "N",
+          "NCA",
+          "NE",
+          "NOK",
+          "NONE",
+          "NP",
+          "NSC",
+          "O",
+          "P",
+          "PG",
+          "PMV",
+          "R",
+          "RA",
+          "RD",
+          "S",
+          "SP",
+          "SPE",
+          "UP",
+          "V",
+          "W",
+          "X",
+          "XC",
+          "XR",
+          "Y"
+        ]
+      }
+    },
+    {
+      "clause_sequences": {},
+      "dialect": "LVS",
+      "family": "softchk",
+      "keywords": [
+        "LVS",
+        "SOFTCHK"
+      ],
+      "name": "LVS SOFTCHK",
+      "ordered_values": {},
+      "value_sets": {
+        "second_arg_values": [
+          "CONTACT",
+          "LOWER",
+          "UPPER"
+        ],
+        "third_arg_values": [
+          "ALL"
+        ]
+      }
+    },
+    {
+      "clause_sequences": {
+        "warning_prefix": [
+          [
+            "WARNING"
+          ]
+        ]
+      },
+      "dialect": "DRC",
+      "family": "incremental_connect",
+      "keywords": [
+        "DRC",
+        "INCREMENTAL",
+        "CONNECT"
+      ],
+      "name": "DRC INCREMENTAL CONNECT",
+      "ordered_values": {},
+      "value_sets": {
+        "warning_values": [
+          "DISABLE",
+          "ENABLE"
+        ]
+      }
+    },
+    {
+      "clause_sequences": {},
+      "dialect": "DRC",
+      "family": "summary_report",
+      "keywords": [
+        "DRC",
+        "SUMMARY",
+        "REPORT"
+      ],
+      "name": "DRC SUMMARY REPORT",
+      "ordered_values": {
+        "flags": [
+          "HIER",
+          "EXECUTED"
+        ]
+      },
+      "value_sets": {
+        "modes": [
+          "APPEND",
+          "REPLACE"
+        ]
+      }
+    },
+    {
+      "clause_sequences": {},
+      "dialect": "ERC",
+      "family": "summary_report",
+      "keywords": [
+        "ERC",
+        "SUMMARY",
+        "REPORT"
+      ],
+      "name": "ERC SUMMARY REPORT",
+      "ordered_values": {
+        "flags": [
+          "HIER"
+        ]
+      },
+      "value_sets": {
+        "modes": [
+          "APPEND",
+          "REPLACE"
+        ]
+      }
+    },
+    {
+      "clause_sequences": {},
+      "dialect": "ERC",
+      "family": "results_database",
+      "keywords": [
+        "ERC",
+        "RESULTS",
+        "DATABASE"
+      ],
+      "name": "ERC RESULTS DATABASE",
+      "ordered_values": {},
+      "value_sets": {
+        "final_modes": [
+          "PSEUDO",
+          "TOP"
+        ],
+        "formats": [
+          "ASCII"
+        ]
+      }
+    },
+    {
+      "clause_sequences": {
+        "selection_clauses": [
+          [
+            "LAYOUT"
+          ],
+          [
+            "SOURCE"
+          ],
+          [
+            "NETFILE"
+          ]
+        ],
+        "trailing_clauses": [
+          [
+            "CELL"
+          ],
+          [
+            "SCALE"
+          ],
+          [
+            "COLUMNS"
+          ]
+        ]
+      },
+      "dialect": "PEX",
+      "family": "report_netsummary",
+      "keywords": [
+        "PEX",
+        "REPORT",
+        "NETSUMMARY"
+      ],
+      "name": "PEX REPORT NETSUMMARY",
+      "ordered_values": {},
+      "value_sets": {
+        "columns": [
+          "ADVANCED",
+          "BASIC"
+        ],
+        "details": [
+          "DETAIL",
+          "SUMMARY"
+        ],
+        "scopes": [
+          "ALL",
+          "FULL",
+          "LOCAL"
+        ]
+      }
+    },
+    {
+      "clause_sequences": {},
+      "dialect": "PEX",
+      "family": "report_point2point",
+      "keywords": [
+        "PEX",
+        "REPORT",
+        "POINT2POINT"
+      ],
+      "name": "PEX REPORT POINT2POINT",
+      "ordered_values": {},
+      "value_sets": {
+        "names": [
+          "LAYOUTNAMES",
+          "SOURCENAMES"
+        ],
+        "sameport_values": [
+          "OPEN",
+          "SHORT"
+        ],
+        "units": [
+          "DBU",
+          "UNIT_LENGTH"
+        ]
+      }
+    },
+    {
+      "clause_sequences": {},
+      "dialect": "PEX",
+      "family": "boolean_suffix",
+      "keywords": [
+        "PEX",
+        "NETLIST",
+        "MUTUAL",
+        "RESISTANCE"
+      ],
+      "name": "PEX NETLIST MUTUAL RESISTANCE",
+      "ordered_values": {},
+      "value_sets": {
+        "values": [
+          "NO",
+          "YES"
+        ]
+      }
+    },
+    {
+      "clause_sequences": {},
+      "dialect": "PEX",
+      "family": "boolean_suffix",
+      "keywords": [
+        "PEX",
+        "NETLIST",
+        "VIRTUAL",
+        "CONNECT"
+      ],
+      "name": "PEX NETLIST VIRTUAL CONNECT",
+      "ordered_values": {},
+      "value_sets": {
+        "values": [
+          "NO",
+          "YES"
+        ]
+      }
+    },
+    {
+      "clause_sequences": {},
+      "dialect": "PEX",
+      "family": "boolean_suffix",
+      "keywords": [
+        "PEX",
+        "NETLIST",
+        "GROUNDNET",
+        "GLOBAL"
+      ],
+      "name": "PEX NETLIST GROUNDNET GLOBAL",
+      "ordered_values": {},
+      "value_sets": {
+        "values": [
+          "NO",
+          "YES"
+        ]
+      }
+    },
+    {
+      "clause_sequences": {},
+      "dialect": "PEX",
+      "family": "boolean_suffix",
+      "keywords": [
+        "PEX",
+        "NETLIST",
+        "NOXREF",
+        "NET",
+        "NAMES"
+      ],
+      "name": "PEX NETLIST NOXREF NET NAMES",
+      "ordered_values": {},
+      "value_sets": {
+        "values": [
+          "NO",
+          "YES"
+        ]
+      }
+    },
+    {
+      "clause_sequences": {},
+      "dialect": "PEX",
+      "family": "boolean_suffix",
+      "keywords": [
+        "PEX",
+        "NETLIST",
+        "LPE",
+        "IGNORE",
+        "IDEALNET"
+      ],
+      "name": "PEX NETLIST LPE IGNORE IDEALNET",
+      "ordered_values": {},
+      "value_sets": {
+        "values": [
+          "NO",
+          "YES"
+        ]
+      }
+    },
+    {
+      "clause_sequences": {},
+      "dialect": "PEX",
+      "family": "boolean_suffix",
+      "keywords": [
+        "PEX",
+        "NETLIST",
+        "CREATE",
+        "SMASHED",
+        "DEVICE",
+        "NAMES"
+      ],
+      "name": "PEX NETLIST CREATE SMASHED DEVICE NAMES",
+      "ordered_values": {},
+      "value_sets": {
+        "values": [
+          "NO",
+          "YES"
+        ]
+      }
+    },
+    {
+      "clause_sequences": {},
+      "dialect": "PEX",
+      "family": "boolean_suffix",
+      "keywords": [
+        "PEX",
+        "NETLIST",
+        "EXPORT",
+        "PORTS"
+      ],
+      "name": "PEX NETLIST EXPORT PORTS",
+      "ordered_values": {},
+      "value_sets": {
+        "values": [
+          "NO",
+          "YES"
+        ]
+      }
+    },
+    {
+      "clause_sequences": {},
+      "dialect": "PEX",
+      "family": "ordered_boolean_pairs",
+      "keywords": [
+        "PEX",
+        "NETLIST",
+        "UPPERCASE"
+      ],
+      "name": "PEX NETLIST UPPERCASE",
+      "ordered_values": {
+        "fields": [
+          "KEYWORDS",
+          "MODELNAMES",
+          "PARAMETERS"
+        ]
+      },
+      "value_sets": {
+        "values": [
+          "NO",
+          "YES"
+        ]
+      }
+    },
+    {
+      "clause_sequences": {},
+      "dialect": "PEX",
+      "family": "connection_section",
+      "keywords": [
+        "PEX",
+        "NETLIST",
+        "CONNECTION",
+        "SECTION"
+      ],
+      "name": "PEX NETLIST CONNECTION SECTION",
+      "ordered_values": {},
+      "value_sets": {
+        "values": [
+          "NO",
+          "YES"
+        ],
+        "yes_trailing_values": [
+          "INST_LOC"
+        ]
+      }
+    },
+    {
+      "clause_sequences": {},
+      "dialect": "PEX",
+      "family": "numeric_or_disable",
+      "keywords": [
+        "PEX",
+        "NETLIST",
+        "UNSHORT",
+        "DEVICE",
+        "PINS"
+      ],
+      "name": "PEX NETLIST UNSHORT DEVICE PINS",
+      "ordered_values": {},
+      "value_sets": {
+        "disable_values": [
+          "NO"
+        ]
+      }
+    },
+    {
+      "clause_sequences": {},
+      "dialect": "PEX",
+      "family": "numeric_or_disable",
+      "keywords": [
+        "PEX",
+        "NETLIST",
+        "LINEWRAP"
+      ],
+      "name": "PEX NETLIST LINEWRAP",
+      "ordered_values": {},
+      "value_sets": {
+        "disable_values": [
+          "NO"
+        ]
+      }
+    },
+    {
+      "clause_sequences": {
+        "compression_modes": [
+          [
+            "CBLOCK"
+          ],
+          [
+            "NOCBLOCK"
+          ]
+        ]
+      },
+      "dialect": "DRC",
+      "family": "results_database",
+      "keywords": [
+        "DRC",
+        "RESULTS",
+        "DATABASE"
+      ],
+      "name": "DRC RESULTS DATABASE",
+      "ordered_values": {},
+      "value_sets": {
+        "final_modes": [
+          "COMBINE",
+          "PSEUDO",
+          "TOP"
+        ],
+        "formats": [
+          "ASCII",
+          "GDS",
+          "GDS2",
+          "GDSII",
+          "OASIS"
+        ],
+        "gds_formats": [
+          "GDS",
+          "GDS2",
+          "GDSII"
+        ],
+        "oasis_compression": [
+          "CBLOCK",
+          "NOCBLOCK"
+        ],
+        "strictness": [
+          "NOSTRICT",
+          "STRICT"
+        ]
+      }
+    }
+  ],
+  "generated_from": [
+    "svrf_parser.directive_contract"
+  ],
+  "manual_root": "$SVRF_MANUAL_ROOT",
+  "schema_version": 1
+}

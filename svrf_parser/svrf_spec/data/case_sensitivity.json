@@ -1,0 +1,92 @@
+{
+  "entries": [
+    {
+      "case_mode": "case_insensitive",
+      "category": "keywords",
+      "manual_refs": [
+        "luj1752242843309\\iddc028bbf-ba2d-4d09-b069-717e96433bbb.html"
+      ],
+      "name": "svrf_keywords_default",
+      "note": "SVRF keywords and identifiers are case-insensitive by default.",
+      "scope": "SVRF_KEYWORDS_AND_IDENTIFIERS",
+      "tags": [
+        "manual_default"
+      ]
+    },
+    {
+      "case_mode": "case_sensitive",
+      "category": "filenames",
+      "manual_refs": [
+        "luj1752242843309\\iddc028bbf-ba2d-4d09-b069-717e96433bbb.html",
+        "luj1752242843309\\idf931aa5d-e2bf-4101-be8d-801786c3e65b.html"
+      ],
+      "name": "filenames_case_sensitive",
+      "note": "Filenames are case-sensitive because external filesystems may be case-sensitive.",
+      "scope": "INCLUDE_AND_EXTERNAL_PATHS",
+      "tags": [
+        "manual_exception"
+      ]
+    },
+    {
+      "case_mode": "case_sensitive",
+      "category": "environment",
+      "manual_refs": [
+        "luj1752242843309\\id227f5401-c3e0-428d-97cb-cc1872c793cc.html",
+        "luj1752242843309\\idf931aa5d-e2bf-4101-be8d-801786c3e65b.html"
+      ],
+      "name": "environment_variables_case_sensitive",
+      "note": "Environment variable names in path handling are treated as case-sensitive external inputs.",
+      "scope": "PATH_ENVIRONMENT_VARIABLES",
+      "tags": [
+        "manual_exception"
+      ]
+    },
+    {
+      "case_mode": "case_sensitive",
+      "category": "cell_names",
+      "manual_refs": [
+        "luj1752242843309\\iddc028bbf-ba2d-4d09-b069-717e96433bbb.html"
+      ],
+      "name": "cell_names_case_sensitive",
+      "note": "Cell names are case-sensitive because they must match external layout/netlist systems.",
+      "scope": "EXTERNAL_LAYOUT_AND_NETLIST_NAMES",
+      "tags": [
+        "manual_exception"
+      ]
+    },
+    {
+      "case_mode": "case_sensitive",
+      "category": "property_names",
+      "manual_refs": [
+        "luj1752242843309\\iddc028bbf-ba2d-4d09-b069-717e96433bbb.html"
+      ],
+      "name": "dfm_property_names_case_sensitive",
+      "note": "DFM property names are documented as case-sensitive data values.",
+      "scope": "DFM_PROPERTY_NAMES",
+      "tags": [
+        "manual_exception"
+      ]
+    },
+    {
+      "case_mode": "context_dependent",
+      "category": "quoted_strings",
+      "manual_refs": [
+        "luj1752242843309\\id74c833a8-79b2-4d25-976f-96a5a1e6ed2d.html",
+        "luj1752242843309\\iddc028bbf-ba2d-4d09-b069-717e96433bbb.html"
+      ],
+      "name": "quoted_strings_not_implicitly_sensitive",
+      "note": "Quoted strings are not automatically case-sensitive; case behavior depends on the referenced external object.",
+      "scope": "QUOTED_STRINGS",
+      "tags": [
+        "context_dependent",
+        "manual_exception"
+      ]
+    }
+  ],
+  "generated_from": [
+    "svrf_parser.svrf_spec.manual_sources",
+    "svrf_parser.svrf_spec.manual_overrides"
+  ],
+  "manual_root": "$SVRF_MANUAL_ROOT",
+  "schema_version": 1
+}

@@ -1,0 +1,2 @@
+INCLUDE "defs_layers.svrf"
+CONNECT M1 M2 BY VIA1

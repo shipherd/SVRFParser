@@ -1,0 +1,434 @@
+{
+  "generated_from": [
+    "svrf_parser.svrf_spec.manual_sources",
+    "svrf_parser.svrf_spec.manual_overrides",
+    "svrf_parser.keywords"
+  ],
+  "keyword_aliases": {
+    "DEV": "DEVICE",
+    "PARA": "PARALLEL",
+    "PERIM": "PERIMETER",
+    "PERP": "PERPENDICULAR",
+    "PROJ": "PROJECTING",
+    "PROP": "PROPERTY"
+  },
+  "keyword_registry": {
+    "ABUT": [
+      "drc_modifier"
+    ],
+    "ACUTE": [
+      "drc_modifier"
+    ],
+    "ALSO": [
+      "drc_modifier"
+    ],
+    "AND": [
+      "binary_op"
+    ],
+    "ANGLE": [
+      "expr_starter"
+    ],
+    "AREA": [
+      "expr_starter"
+    ],
+    "ATTACH": [
+      "svrf_keyword"
+    ],
+    "BACKUP": [
+      "drc_modifier"
+    ],
+    "BEVEL": [
+      "drc_modifier"
+    ],
+    "BY": [
+      "binary_op",
+      "svrf_keyword"
+    ],
+    "CELL": [
+      "drc_modifier"
+    ],
+    "CENTERS": [
+      "drc_modifier"
+    ],
+    "CMACRO": [
+      "svrf_keyword"
+    ],
+    "CONNECT": [
+      "svrf_keyword"
+    ],
+    "CONNECTED": [
+      "drc_modifier"
+    ],
+    "CONVEX": [
+      "drc_modifier",
+      "expr_starter"
+    ],
+    "COPY": [
+      "expr_starter",
+      "unary_op"
+    ],
+    "CORNER": [
+      "drc_modifier"
+    ],
+    "COUNT": [
+      "drc_modifier"
+    ],
+    "CUT": [
+      "binary_op",
+      "expr_starter"
+    ],
+    "DENSITY": [
+      "drc_op",
+      "expr_starter"
+    ],
+    "DEVICE": [
+      "svrf_keyword"
+    ],
+    "DFM": [
+      "directive_head",
+      "expr_starter"
+    ],
+    "DMACRO": [
+      "svrf_keyword"
+    ],
+    "DONUT": [
+      "expr_starter",
+      "unary_op"
+    ],
+    "DRAWN": [
+      "directive_head",
+      "drc_modifier",
+      "expr_starter"
+    ],
+    "DRC": [
+      "directive_head"
+    ],
+    "EDGE": [
+      "drc_modifier"
+    ],
+    "ELSE": [
+      "svrf_keyword"
+    ],
+    "EMPTY": [
+      "drc_modifier"
+    ],
+    "ENC": [
+      "drc_op",
+      "expr_starter"
+    ],
+    "ENCLOSE": [
+      "binary_op",
+      "drc_op",
+      "expr_starter"
+    ],
+    "ENDIF": [
+      "svrf_keyword"
+    ],
+    "ENVIRONMENT": [
+      "directive_head"
+    ],
+    "ERC": [
+      "directive_head"
+    ],
+    "EXCLUDE": [
+      "directive_head"
+    ],
+    "EXPAND": [
+      "expr_starter"
+    ],
+    "EXT": [
+      "drc_op",
+      "expr_starter"
+    ],
+    "EXTENT": [
+      "expr_starter",
+      "unary_op"
+    ],
+    "EXTENTS": [
+      "expr_starter"
+    ],
+    "FILTER": [
+      "directive_head"
+    ],
+    "FLAG": [
+      "directive_head"
+    ],
+    "FLATTEN": [
+      "directive_head"
+    ],
+    "FRACTURE": [
+      "directive_head"
+    ],
+    "GROUP": [
+      "svrf_keyword"
+    ],
+    "GROW": [
+      "expr_starter"
+    ],
+    "HCELL": [
+      "directive_head"
+    ],
+    "HIER": [
+      "drc_modifier"
+    ],
+    "HOLES": [
+      "expr_starter",
+      "unary_op"
+    ],
+    "IF": [
+      "svrf_keyword"
+    ],
+    "INNER": [
+      "drc_modifier"
+    ],
+    "INSIDE": [
+      "binary_op",
+      "drc_modifier"
+    ],
+    "INT": [
+      "drc_op",
+      "expr_starter"
+    ],
+    "INTERACT": [
+      "binary_op",
+      "expr_starter"
+    ],
+    "LABEL": [
+      "directive_head"
+    ],
+    "LAYER": [
+      "svrf_keyword"
+    ],
+    "LAYOUT": [
+      "directive_head"
+    ],
+    "LENGTH": [
+      "drc_modifier",
+      "expr_starter"
+    ],
+    "LITHO": [
+      "directive_head"
+    ],
+    "LVS": [
+      "directive_head"
+    ],
+    "LVSCAREFUL": [
+      "drc_modifier"
+    ],
+    "MASK": [
+      "directive_head"
+    ],
+    "MDP": [
+      "directive_head"
+    ],
+    "MDPMERGE": [
+      "directive_head"
+    ],
+    "MERGE": [
+      "expr_starter"
+    ],
+    "NET": [
+      "directive_head"
+    ],
+    "NOT": [
+      "binary_op",
+      "expr_starter",
+      "unary_op"
+    ],
+    "NOTCH": [
+      "drc_modifier"
+    ],
+    "OBTUSE": [
+      "drc_modifier"
+    ],
+    "OF": [
+      "svrf_keyword"
+    ],
+    "ONLY": [
+      "drc_modifier"
+    ],
+    "OPPOSITE": [
+      "drc_modifier"
+    ],
+    "OR": [
+      "binary_op",
+      "expr_starter"
+    ],
+    "ORIGINAL": [
+      "drc_modifier"
+    ],
+    "ORTHOGONAL": [
+      "drc_modifier"
+    ],
+    "OUT": [
+      "binary_op"
+    ],
+    "OUTSIDE": [
+      "binary_op",
+      "drc_modifier"
+    ],
+    "OVERUNDER": [
+      "svrf_keyword"
+    ],
+    "PARALLEL": [
+      "drc_modifier"
+    ],
+    "PATH": [
+      "expr_starter"
+    ],
+    "PATHCHK": [
+      "directive_head"
+    ],
+    "PERC": [
+      "directive_head"
+    ],
+    "PERIMETER": [
+      "drc_modifier",
+      "expr_starter"
+    ],
+    "PERPENDICULAR": [
+      "drc_modifier"
+    ],
+    "PEX": [
+      "directive_head"
+    ],
+    "POLYGON": [
+      "drc_modifier"
+    ],
+    "PORT": [
+      "directive_head"
+    ],
+    "PRECISION": [
+      "directive_head"
+    ],
+    "PRINT": [
+      "drc_modifier"
+    ],
+    "PROJECTING": [
+      "drc_modifier"
+    ],
+    "PROPERTY": [
+      "svrf_keyword"
+    ],
+    "PUSH": [
+      "expr_starter"
+    ],
+    "RDB": [
+      "drc_modifier"
+    ],
+    "RECTANGLE": [
+      "drc_modifier",
+      "expr_starter"
+    ],
+    "RECTANGLES": [
+      "expr_starter"
+    ],
+    "REGION": [
+      "drc_modifier"
+    ],
+    "RESOLUTION": [
+      "directive_head"
+    ],
+    "RET": [
+      "directive_head",
+      "expr_starter"
+    ],
+    "SCONNECT": [
+      "svrf_keyword"
+    ],
+    "SHIFT": [
+      "expr_starter"
+    ],
+    "SHRINK": [
+      "expr_starter"
+    ],
+    "SINGULAR": [
+      "drc_modifier"
+    ],
+    "SIZE": [
+      "expr_starter"
+    ],
+    "SONR": [
+      "directive_head"
+    ],
+    "SOURCE": [
+      "directive_head"
+    ],
+    "SQUARE": [
+      "drc_modifier"
+    ],
+    "STAMP": [
+      "directive_head",
+      "expr_starter"
+    ],
+    "STEP": [
+      "drc_modifier",
+      "svrf_keyword"
+    ],
+    "SVRF": [
+      "directive_head"
+    ],
+    "TDDRC": [
+      "directive_head"
+    ],
+    "TEXT": [
+      "directive_head"
+    ],
+    "TITLE": [
+      "directive_head"
+    ],
+    "TOUCH": [
+      "binary_op"
+    ],
+    "TRACE": [
+      "svrf_keyword"
+    ],
+    "TRUNCATE": [
+      "svrf_keyword"
+    ],
+    "UNDEROVER": [
+      "svrf_keyword"
+    ],
+    "UNIT": [
+      "directive_head"
+    ],
+    "VARIABLE": [
+      "directive_head"
+    ],
+    "VERTEX": [
+      "expr_starter"
+    ],
+    "VIRTUAL": [
+      "directive_head"
+    ],
+    "WINDOW": [
+      "drc_modifier"
+    ],
+    "WITH": [
+      "drc_modifier",
+      "expr_starter"
+    ],
+    "XOR": [
+      "binary_op"
+    ]
+  },
+  "layer_bp": {
+    "AND": 20,
+    "BY": 35,
+    "COIN": 30,
+    "COINCIDENT": 30,
+    "CUT": 30,
+    "ENCLOSE": 30,
+    "IN": 30,
+    "INSIDE": 30,
+    "INTERACT": 30,
+    "NOT": 20,
+    "OR": 10,
+    "OUT": 30,
+    "OUTSIDE": 30,
+    "TOUCH": 30,
+    "XOR": 10
+  },
+  "manual_root": "$SVRF_MANUAL_ROOT",
+  "schema_version": 1
+}
