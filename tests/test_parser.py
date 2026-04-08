@@ -94,6 +94,22 @@ class TestManualExamples(unittest.TestCase):
         self.assertIsInstance(node.body[0], ast.DRCOp)
         self.assertEqual(node.body[0].op, "INT")
 
+    def test_rule_check_preserves_unquoted_compact_voltage_labels(self):
+        labels = (
+            "CHECK.2.1:0.2V__1.250V",
+            "CHECK.4.1:0.2V__1.250V",
+            "CHECK.4.8:0.2V__1.250V",
+            "CHECK.6.8:0.2V__1.250V",
+        )
+        for label in labels:
+            with self.subTest(label=label):
+                tree, warnings = parse_with_diagnostics(f"{label} {{ @ cmt\n  INT M1 < 1\n}}\n")
+                self.assertEqual(warnings, [])
+                self.assertEqual(len(tree.statements), 1)
+                node = tree.statements[0]
+                self.assertIsInstance(node, ast.RuleCheckBlock)
+                self.assertEqual(node.name, label)
+
     def test_define_and_ifdef(self):
         text = "#DEFINE process 7lm\n#IFDEF process\nLAYER poly 5\n#ENDIF\n"
         tree = parse(text)
@@ -193,12 +209,28 @@ class TestManualExamples(unittest.TestCase):
         node = tree.statements[0]
         self.assertIsInstance(node, ast.EncryptedBlock)
         self.assertEqual(node.content, "payload")
+        self.assertEqual(node.body, [])
+        self.assertEqual(node.parse_status, "opaque")
+
+    def test_encrypted_plaintext_payload_is_parsed_as_body(self):
+        tree = parse("#ENCRYPT\nLAYER M1 1\nM2 = M1\n#ENDCRYPT")
+        node = tree.statements[0]
+        self.assertIsInstance(node, ast.EncryptedBlock)
+        self.assertEqual(node.parse_status, "plaintext")
+        self.assertEqual(len(node.body), 2)
+        self.assertIsInstance(node.body[0], ast.LayerDef)
+        self.assertEqual(node.body[0].name, "M1")
+        self.assertIsInstance(node.body[1], ast.LayerAssignment)
+        self.assertEqual(node.body[1].name, "M2")
+        self.assertEqual(node.body[0].line, 2)
 
     def test_decrypt_inline_payload_block(self):
         tree = parse("#DECRYPT abc123\n#ENDCRYPT")
         node = tree.statements[0]
         self.assertIsInstance(node, ast.EncryptedBlock)
         self.assertEqual(node.content.strip(), "abc123")
+        self.assertEqual(node.body, [])
+        self.assertEqual(node.parse_status, "opaque")
 
     def test_prefix_edge_binary(self):
         tree = parse("_T = IN EDGE M1 M2")

@@ -193,11 +193,13 @@ class Include(AstNode):
 
 
 class EncryptedBlock(AstNode):
-    __slots__ = ("content",)
+    __slots__ = ("content", "body", "parse_status")
 
-    def __init__(self, content="", **kw):
+    def __init__(self, content="", body=None, parse_status="opaque", **kw):
         super().__init__(**kw)
         self.content = content
+        self.body = body or []
+        self.parse_status = parse_status
 
 
 class LayerDef(AstNode):

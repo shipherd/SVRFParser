@@ -86,6 +86,23 @@ class ValidationTests(unittest.TestCase):
         self.assertIn("encrypted SVRF blocks", message)
         self.assertIn("HIDDEN_LAYER", message)
 
+    def test_validate_uses_plaintext_encrypted_body_symbols(self):
+        text = "#ENCRYPT\nLAYER HIDDEN_LAYER 99\n#ENDCRYPT\nTMP = HIDDEN_LAYER\n"
+        result = validate_svrf(text, strict=False)
+        warning_codes = {diag.code for diag in result.warnings}
+        error_codes = {diag.code for diag in result.errors}
+
+        self.assertTrue(result.valid)
+        self.assertNotIn("semantic.reference.undefined", warning_codes)
+        self.assertNotIn(
+            "validation.encrypted_blocks.possible_hidden_definitions",
+            warning_codes,
+        )
+        self.assertNotIn("semantic.reference.undefined", error_codes)
+        encrypted = result.program.statements[0]
+        self.assertEqual("plaintext", encrypted.parse_status)
+        self.assertEqual("HIDDEN_LAYER", encrypted.body[0].name)
+
     def test_validate_exposes_profile_dialects_and_families(self):
         text = (
             "LAYER M1 10\n"

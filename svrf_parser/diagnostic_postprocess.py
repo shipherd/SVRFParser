@@ -28,11 +28,13 @@ _UNDEFINED_SYMBOL_CODES = frozenset(
 )
 
 
-def first_encrypted_block(program):
+def first_encrypted_block(program, *, opaque_only=False):
     if program is None:
         return None
     for node in program.walk():
-        if isinstance(node, ast.EncryptedBlock):
+        if isinstance(node, ast.EncryptedBlock) and (
+            not opaque_only or getattr(node, "parse_status", "opaque") == "opaque"
+        ):
             return node
     return None
 
@@ -193,7 +195,7 @@ def reclassify_unresolved_reference_diagnostics(
 
 
 def warn_encrypted_blocks_may_define_symbols(doc, diagnostics, warnings, include_stack=()):
-    encrypted = first_encrypted_block(doc.program)
+    encrypted = first_encrypted_block(doc.program, opaque_only=True)
     if encrypted is None:
         return
 

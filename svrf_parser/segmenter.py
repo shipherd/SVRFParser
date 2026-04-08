@@ -268,15 +268,63 @@ class StatementSegmenter:
 
     def scan_rule_check_header(self, idx):
         scanned = self.scan_name(idx)
-        if scanned is None:
+        if scanned is not None:
+            name, next_idx = scanned
+            next_idx = self.next_non_newline_index(next_idx)
+            token = self._token_at(next_idx)
+            if token.type == TT.SYMBOL and token.value == "{":
+                body_start = self.next_non_newline_index(next_idx + 1)
+                return RuleCheckHeader(name=name, body_start=body_start)
+        return self.scan_compact_rule_check_header(idx)
+
+    def scan_compact_rule_check_header(self, idx):
+        if idx >= self.length:
             return None
-        name, next_idx = scanned
-        next_idx = self.next_non_newline_index(next_idx)
-        token = self._token_at(next_idx)
+
+        first = self._token_at(idx)
+        if first.type == TT.STRING:
+            next_idx = self.next_non_newline_index(idx + 1)
+            token = self._token_at(next_idx)
+            if token.type != TT.SYMBOL or token.value != "{":
+                return None
+            body_start = self.next_non_newline_index(next_idx + 1)
+            return RuleCheckHeader(name=first.value, body_start=body_start)
+
+        part = self._name_part_value(first)
+        if part is None:
+            return None
+
+        parts = [part]
+        prev = first
+        idx += 1
+        while idx < self.length:
+            token = self._token_at(idx)
+            if token.type == TT.NEWLINE:
+                next_idx = self.next_non_newline_index(idx + 1)
+                token = self._token_at(next_idx)
+                if token.type == TT.SYMBOL and token.value == "{":
+                    idx = next_idx
+                    break
+                return None
+            if token.type == TT.SYMBOL and token.value == "{":
+                break
+            if token.offset != prev.end_offset:
+                return None
+            if token.type == TT.SYMBOL and token.value in {":", "::"}:
+                parts.append(token.value)
+            else:
+                part = self._name_part_value(token)
+                if part is None:
+                    return None
+                parts.append(part)
+            prev = token
+            idx += 1
+
+        token = self._token_at(idx)
         if token.type != TT.SYMBOL or token.value != "{":
             return None
-        body_start = self.next_non_newline_index(next_idx + 1)
-        return RuleCheckHeader(name=name, body_start=body_start)
+        body_start = self.next_non_newline_index(idx + 1)
+        return RuleCheckHeader(name="".join(parts), body_start=body_start)
 
     def scan_property_block_header(self, idx, stop_preprocessors=None):
         stop_preprocessors = set(stop_preprocessors or ())
@@ -340,25 +388,7 @@ class StatementSegmenter:
     def starts_rule_check_at(self, idx, mode):
         if mode != "top" or idx >= self.length:
             return False
-        token = self.tokens[idx]
-        if token.type not in (TT.IDENT, TT.STRING, TT.NUMBER):
-            return False
-        idx += 1
-        idx = self.next_non_newline_index(idx)
-        while idx + 1 < self.length:
-            colon = self.tokens[idx]
-            if colon.type != TT.SYMBOL or colon.value != ":":
-                break
-            idx += 1
-            idx = self.next_non_newline_index(idx)
-            if idx >= self.length or self.tokens[idx].type not in (TT.IDENT, TT.STRING, TT.NUMBER):
-                return False
-            idx += 1
-            idx = self.next_non_newline_index(idx)
-        if idx < self.length:
-            nxt = self.tokens[idx]
-            return nxt.type == TT.SYMBOL and nxt.value == "{"
-        return False
+        return self.scan_rule_check_header(idx) is not None
 
     def starts_line_statement_at(self, idx):
         if idx >= self.length:

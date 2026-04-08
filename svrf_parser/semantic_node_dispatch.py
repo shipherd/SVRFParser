@@ -67,6 +67,11 @@ def validate_semantic_node(validator, node, scope, pending):
             validator.error("semantic.include.empty_path", "INCLUDE path is empty", node)
         return
 
+    if isinstance(node, ast.EncryptedBlock):
+        if node.body:
+            validator._push_statement_tasks(pending, node.body, scope)
+        return
+
     if isinstance(node, ast.Directive):
         keyword_tuple = tuple(node.keywords)
         min_args = _DIRECTIVE_MIN_ARGUMENTS.get(keyword_tuple)

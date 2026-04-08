@@ -9,11 +9,13 @@ from . import ast
 from .expression_parser import ExpressionParserMixin
 from .exceptions import ParseError, SVRFParseError
 from .keywords import _DIRECTIVE_HEADS, _LAYER_BP
+from .lexer import Lexer
 from .operation_handlers import OperationParserMixin
 from .parser_cursor import ParserCursorMixin
 from .preprocessor_schema import PREPROCESSOR_SCHEMA_REGISTRY
 from .segmenter import SegmenterConfig, StatementSegmenter
 from .statement_handlers import StatementParserMixin
+from .svrf_constructs import count_svrf_constructs
 from .svrf_spec import PARSER_SPEC
 from .tokens import TokenType
 
@@ -851,8 +853,10 @@ class Parser(ParserCursorMixin, StatementParserMixin, OperationParserMixin, Expr
         start = self._expect(TT.PREPROCESSOR)
         self._match(TT.NEWLINE)
         content = ""
+        content_token = None
         if self._at(TT.ENCRYPTED):
-            content = self._advance().value
+            content_token = self._advance()
+            content = content_token.value
         else:
             parts = []
             while not self._at(TT.EOF):
@@ -870,7 +874,59 @@ class Parser(ParserCursorMixin, StatementParserMixin, OperationParserMixin, Expr
         if self._at(TT.PREPROCESSOR, "#ENDCRYPT"):
             self._advance()
             self._collect_line_text()
-        return ast.EncryptedBlock(content=content, **self._loc(start))
+        body, parse_status = self._try_parse_encrypted_plaintext(content, content_token)
+        return ast.EncryptedBlock(
+            content=content,
+            body=body,
+            parse_status=parse_status,
+            **self._loc(start),
+        )
+
+    def _try_parse_encrypted_plaintext(self, content, content_token):
+        if not content or not content.strip():
+            return [], "opaque"
+        try:
+            lexer = Lexer(content, filename=self.filename)
+            parser = type(self)(
+                lexer.tokens(),
+                filename=self.filename,
+                source_text=content,
+                strict=False,
+            )
+            program = parser.parse()
+        except Exception:
+            return [], "opaque"
+        statements = list(getattr(program, "statements", ()) or ())
+        if not statements or parser.warnings:
+            return [], "opaque"
+        if any(isinstance(statement, ast.ErrorNode) for statement in statements):
+            return [], "opaque"
+        if count_svrf_constructs(statements) == 0:
+            return [], "opaque"
+        if content_token is not None:
+            self._shift_encrypted_body_spans(
+                statements,
+                line_delta=content_token.line - 1,
+                first_line_col_delta=content_token.col - 1,
+                offset_delta=content_token.offset,
+            )
+        return statements, "plaintext"
+
+    @staticmethod
+    def _shift_encrypted_body_spans(statements, *, line_delta, first_line_col_delta, offset_delta):
+        for statement in statements:
+            for node in statement.walk():
+                if node.line:
+                    if node.line == 1:
+                        node.col += first_line_col_delta
+                    if node.end_line == 1:
+                        node.end_col += first_line_col_delta
+                    node.line += line_delta
+                    node.end_line += line_delta
+                if node.start_offset:
+                    node.start_offset += offset_delta
+                if node.end_offset:
+                    node.end_offset += offset_delta
 
     def _parse_property_block(self):
         return self._parse_statement_shape("property_block")

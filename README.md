@@ -281,6 +281,11 @@ Common top-level nodes include:
 - `Connect`, `Device`, `DMacro`, `MacroCall`
 - `Group`, `Attach`, `TraceProperty`
 
+`EncryptedBlock` always preserves the raw payload in `content`. If the payload
+between `#ENCRYPT` / `#DECRYPT` and `#ENDCRYPT` parses cleanly as plaintext
+SVRF, `body` contains the parsed statements and `parse_status` is `"plaintext"`.
+Otherwise `body` is empty and `parse_status` is `"opaque"`.
+
 Expression and rule-body nodes include:
 
 - `BinaryOp`, `UnaryOp`, `LayerRef`
@@ -460,8 +465,11 @@ Current covered families include:
 - Rule-check blocks with same-line or next-line braces
 - Multi-line `@` descriptions with `^VARNAME` variable references
 - Comments: `//` and `/* ... */`
-- Limited/opaque handling for encrypted content, `TVF`, `POLYGON`, and other
-  forms that can define symbols outside visible SVRF text
+- Plaintext-capable handling for `#ENCRYPT` / `#DECRYPT` blocks: clean SVRF
+  payloads are parsed and participate in validation; opaque payloads remain
+  preserved as raw content
+- Limited/opaque handling for `TVF`, `POLYGON`, and other forms that can define
+  symbols outside visible SVRF text
 
 The semantic validator adds conservative checks for includes, include cycles,
 shared symbols across includes, duplicate definitions, macro parameters,

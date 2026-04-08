@@ -326,6 +326,16 @@ class SegmenterTests(unittest.TestCase):
         self.assertEqual(statement_cst.rule_check_header.name, "RULE1:CHK")
         self.assertEqual(statement_cst.rule_check_header.body_start, _nth_token_type_index(tokens, TT.RULE_COMMENT))
 
+    def test_rule_check_header_preserves_compact_voltage_label(self):
+        text = "CHECK.2.1:0.2V__1.250V {\n  @ cmt\n  INT M1 < 1\n}\n"
+        segmenter, tokens = _make_segmenter(text)
+        statement_cst = segmenter.next_statement_cst(0, "top")
+        self.assertIsNotNone(statement_cst)
+        self.assertEqual(statement_cst.parse_kind, "rule_check")
+        self.assertIsNotNone(statement_cst.rule_check_header)
+        self.assertEqual(statement_cst.rule_check_header.name, "CHECK.2.1:0.2V__1.250V")
+        self.assertEqual(statement_cst.rule_check_header.body_start, _nth_token_type_index(tokens, TT.RULE_COMMENT))
+
     def test_statement_cst_tracks_property_block_header_metadata(self):
         text = "[PROPERTY L,W\n  X = 1\n]\n"
         segmenter, tokens = _make_segmenter(text)

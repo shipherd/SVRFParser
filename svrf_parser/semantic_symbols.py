@@ -326,6 +326,9 @@ def _collect_statement_placeholders(statements):
             pending.extend(reversed(current.else_body))
             pending.extend(reversed(current.then_body))
             continue
+        if isinstance(current, ast.EncryptedBlock):
+            pending.extend(reversed(current.body))
+            continue
         if isinstance(current, ast.IfExpr):
             pending.extend(reversed(current.else_body))
             for branch in reversed(current.elseifs):
@@ -361,6 +364,9 @@ def _collect_local_scope_reference_candidates(statements):
         if isinstance(current, ast.IfDef):
             pending.extend(reversed(current.else_body))
             pending.extend(reversed(current.then_body))
+            continue
+        if isinstance(current, ast.EncryptedBlock):
+            pending.extend(reversed(current.body))
             continue
         if isinstance(current, ast.IfExpr):
             pending.extend(reversed(current.else_body))
@@ -547,6 +553,8 @@ def build_symbol_table(statements, filename="<input>", strict=False):
             if isinstance(stmt, ast.IfDef):
                 push_stream(stmt.else_body, stmt_filename, True)
                 push_stream(stmt.then_body, stmt_filename, True)
+            elif isinstance(stmt, ast.EncryptedBlock) and stmt.body:
+                push_stream(stmt.body, stmt_filename, item_conditional)
 
     visit_statements(statements, filename)
     table.local_only_references.update(_collect_local_scope_reference_candidates(statements))
@@ -554,4 +562,3 @@ def build_symbol_table(statements, filename="<input>", strict=False):
     table.local_only_references.difference_update(table.variables)
     table.local_only_references.difference_update(table.conditional_variables)
     return table, diagnostics
-
