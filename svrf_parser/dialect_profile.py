@@ -307,6 +307,11 @@ def iter_program_profile_matches(program):
             if entry is not None:
                 yield entry, node
 
+        if isinstance(node, ast.DfmSpec):
+            entry = DIALECT_PROFILE_REGISTRY.match_operation("DFM SPEC " + node.kind)
+            if entry is not None:
+                yield entry, node
+
 
 def analyze_program_dialects(program):
     if program is None:

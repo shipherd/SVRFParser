@@ -27,14 +27,42 @@ _UNDEFINED_SYMBOL_CODES = frozenset(
     }
 )
 
+_CONDITIONAL_SYMBOL_CODES = frozenset({
+    "semantic.reference.conditional", "semantic.reference.unavailable_branch",
+})
 
-def first_encrypted_block(program, *, opaque_only=False):
+
+def summarize_conditional_references(diagnostics):
+    """Group repeated availability notices without suppressing their findings."""
+    grouped = []
+    indexes = {}
+    for diagnostic in diagnostics:
+        metadata = diagnostic.metadata or {}
+        symbol = metadata.get("symbol")
+        if diagnostic.code not in _CONDITIONAL_SYMBOL_CODES or not symbol:
+            grouped.append(diagnostic)
+            continue
+        key = (diagnostic.filename, diagnostic.include_stack, diagnostic.code,
+               str(symbol).upper(), metadata.get("reference_context"))
+        if key not in indexes:
+            indexes[key] = len(grouped)
+            grouped.append(diagnostic)
+            continue
+        index = indexes[key]
+        first = grouped[index]
+        details = dict(first.metadata or {})
+        details["occurrence_count"] = details.get("occurrence_count", 1) + metadata.get("occurrence_count", 1)
+        grouped[index] = replace(first, metadata=details)
+    return grouped
+
+
+def first_encrypted_block(program, *, opaque_only=False, filename=None):
     if program is None:
         return None
     for node in program.walk():
         if isinstance(node, ast.EncryptedBlock) and (
             not opaque_only or getattr(node, "parse_status", "opaque") == "opaque"
-        ):
+        ) and (filename is None or not node.filename or node.filename == filename):
             return node
     return None
 
@@ -195,7 +223,7 @@ def reclassify_unresolved_reference_diagnostics(
 
 
 def warn_encrypted_blocks_may_define_symbols(doc, diagnostics, warnings, include_stack=()):
-    encrypted = first_encrypted_block(doc.program, opaque_only=True)
+    encrypted = first_encrypted_block(doc.program, opaque_only=True, filename=doc.filename)
     if encrypted is None:
         return
 
@@ -230,7 +258,7 @@ def warn_encrypted_blocks_may_define_symbols(doc, diagnostics, warnings, include
                 end_offset=encrypted.end_offset,
                 snippet=encrypted.source_text,
             ),
-            include_stack,
+            encrypted.include_stack or include_stack,
         )
     )
 
@@ -245,7 +273,7 @@ def warn_limited_support_features(doc, warnings, include_stack=()):
                     SEVERITY_WARNING,
                     notice.warning_code,
                     notice.message,
-                    filename=doc.filename,
+                    filename=node.filename or doc.filename,
                     line=node.line,
                     col=node.col,
                     end_line=node.end_line,
@@ -254,7 +282,7 @@ def warn_limited_support_features(doc, warnings, include_stack=()):
                     end_offset=node.end_offset,
                     snippet=node.source_text,
                 ),
-                include_stack,
+                node.include_stack or include_stack,
             )
         )
 

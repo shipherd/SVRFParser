@@ -4,4 +4,5 @@ __pycache__/
 .claude/
 nul
 baseline_report.json
+coverage_matrix.json
 tools/

@@ -344,7 +344,7 @@ SYMBOL_CONVENTION_ENTRIES = (
     {
         "name": "scalar_tuple_heads",
         "category": "scalar_context",
-        "values": ("BY", "STEP", "WINDOW", "SCALE"),
+        "values": ("BY", "STEP", "WINDOW", "SCALE", "LENGTH", "WIDTH"),
         "note": "These tuple heads introduce scalar/numeric argument contexts in the current parser and validator.",
         "manual_refs": (
             r"luj1752242843309\iddc028bbf-ba2d-4d09-b069-717e96433bbb.html",

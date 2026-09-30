@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from .svrf_spec import OPERATION_SCHEMA_SPEC
+from .svrf_spec import OPERATION_SCHEMA_SPEC, PARSER_SPEC
 from .tokens import TokenType
 
 TT = TokenType
@@ -35,7 +35,8 @@ class ResolvedOperationSchema:
 
 
 class OperationSchemaRegistry:
-    def __init__(self, schemas):
+    def __init__(self, schemas, contracts=()):
+        self.contracts = {entry.name: entry for entry in contracts}
         self.schemas = tuple(
             sorted(
                 schemas,
@@ -47,6 +48,28 @@ class OperationSchemaRegistry:
         for schema in self.schemas:
             if schema.head_prefix:
                 self._by_first_word.setdefault(schema.head_prefix[0], []).append(schema)
+
+    def contract_for(self, name):
+        return self.contracts.get(str(name).upper())
+
+    def operand_role(self, name, index, count):
+        contract = self.contract_for(name)
+        if contract is None:
+            return None
+        if count == 1 and contract.single_operand_role:
+            return contract.single_operand_role
+        if index < len(contract.operand_roles):
+            return contract.operand_roles[index]
+        return contract.variadic_operand_role
+
+    @staticmethod
+    def modifier_starters_for(schema):
+        starters = PARSER_SPEC.table("modifier_starters")
+        if schema.modifier_family == "dfm_property":
+            return starters | PARSER_SPEC.table("dfm_property_modifiers")
+        if schema.modifier_family == "ret":
+            return starters | PARSER_SPEC.table("ret_option_starters") | {"EMULATION"}
+        return starters
 
     @staticmethod
     def _match_prefix(tokens, start_idx, head_prefix, next_non_newline_index):
@@ -178,4 +201,4 @@ OPERATION_SCHEMAS = tuple(
 )
 
 
-OPERATION_SCHEMA_REGISTRY = OperationSchemaRegistry(OPERATION_SCHEMAS)
+OPERATION_SCHEMA_REGISTRY = OperationSchemaRegistry(OPERATION_SCHEMAS, OPERATION_SCHEMA_SPEC.contracts)

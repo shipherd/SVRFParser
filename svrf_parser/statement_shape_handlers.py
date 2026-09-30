@@ -5,6 +5,7 @@ from __future__ import annotations
 from . import ast
 from .clause_cst import DelimitedGroupClause, ModifierClause, OperandClause, ScalarClause
 from .exceptions import ParseError
+from .include_syntax import EMBEDDED_INCLUDE_HEADS
 from .normalizer import normalize_statement_clause_cst
 from .statement_shape import STATEMENT_SHAPE_REGISTRY
 from .statement_block_handlers import StatementBlockParserMixin
@@ -340,19 +341,25 @@ class StatementShapeParserMixin(StatementBlockParserMixin):
         values = []
         environment = False
 
-        if self._match(TT.IDENT, "ENVIRONMENT"):
+        embedded_include = self._parse_embedded_include_continuation()
+        if embedded_include is not None:
+            values.append(embedded_include)
+        elif self._match(TT.IDENT, "ENVIRONMENT"):
             environment = True
         else:
             while not self._at_statement_limit("top", allow_same_line_statement=True):
                 if self._at_ident("INCLUDE"):
                     values.append(self._parse_include(embedded=True))
                     continue
-                if self._cur().type == TT.STRING:
+                if self._cur().type == TT.STRING and not (
+                    self._peek().type == TT.SYMBOL
+                    and self._peek().value in {"+", "-", "*", "/", "^", "%"}
+                ):
                     token = self._advance()
                     values.append(ast.StringLiteral(value=token.value, **self._loc(token)))
                     continue
                 values.append(
-                    self._parse_expression(stop_on_newline=True)
+                    self._parse_expression(stop_on_newline=True, context="scalar")
                 )
                 if self._cur().type == TT.NEWLINE:
                     break
@@ -393,8 +400,25 @@ class StatementShapeParserMixin(StatementBlockParserMixin):
             validator=self._can_normalize_directive_clause_cst,
         )
         if normalized is not None:
+            self._attach_embedded_include_continuation(normalized)
             return normalized
         start, keywords = self._parse_directive_head()
         arguments = self._parse_directive_arguments()
-        return ast.Directive(keywords=keywords, arguments=arguments, **self._loc(start))
+        node = ast.Directive(keywords=keywords, arguments=arguments, **self._loc(start))
+        self._attach_embedded_include_continuation(node)
+        return node
+
+    def _parse_embedded_include_continuation(self):
+        index = self._next_non_newline_index()
+        token = self.tokens[index]
+        if token.type != TT.IDENT or token.value != "INCLUDE":
+            return None
+        self.pos = index
+        return self._finish_node(self._parse_include(embedded=True), index)
+
+    def _attach_embedded_include_continuation(self, node):
+        if not node.arguments and tuple(node.keywords) in EMBEDDED_INCLUDE_HEADS:
+            include = self._parse_embedded_include_continuation()
+            if include is not None:
+                node.arguments.append(include)
 

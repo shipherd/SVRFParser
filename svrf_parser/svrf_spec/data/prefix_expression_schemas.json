@@ -17,6 +17,14 @@
       ]
     },
     {
+      "name": "text_selection",
+      "parser_method": "_parse_text_selection_nud",
+      "priority": 98,
+      "tags": [
+        "text_selection"
+      ]
+    },
+    {
       "name": "inside_outside_cell",
       "parser_method": "_parse_inside_outside_cell_nud",
       "priority": 95,

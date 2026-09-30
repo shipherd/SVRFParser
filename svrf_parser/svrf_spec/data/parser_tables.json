@@ -747,12 +747,13 @@
   "schema_version": 1,
   "tables": {
     "arithmetic_bp": {
+      "%": 40,
       "&&": 3,
       "*": 40,
       "+": 36,
       "-": 36,
       "/": 40,
-      "^": 45,
+      "^": 40,
       "||": 2
     },
     "comparison_symbols": [
@@ -1186,6 +1187,7 @@
       "WITH"
     ],
     "infix_bp": {
+      "%": 40,
       "&&": 3,
       "*": 40,
       "+": 36,
@@ -1206,7 +1208,7 @@
       "OUTSIDE": 30,
       "TOUCH": 30,
       "XOR": 10,
-      "^": 45,
+      "^": 40,
       "||": 2
     },
     "measurement_ops": [
@@ -1376,6 +1378,7 @@
     "unary_ops": [
       "COPY",
       "DONUT",
+      "FLATTEN",
       "HOLES",
       "MERGE",
       "NOT",

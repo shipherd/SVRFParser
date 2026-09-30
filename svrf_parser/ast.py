@@ -16,6 +16,8 @@ _POSITION_FIELDS = (
     "start_offset",
     "end_offset",
     "source_text",
+    "filename",
+    "include_stack",
 )
 
 
@@ -48,13 +50,15 @@ def _iter_direct_child_nodes(value):
             yield from _iter_direct_child_nodes(item)
 
 
-def _value_to_dict(value, include_position):
+def _value_to_dict(value, include_position, redact_source=False):
     if isinstance(value, AstNode):
-        return value.to_dict(include_position=include_position)
+        return value.to_dict(include_position=include_position, redact_source=redact_source)
     if isinstance(value, list):
-        return [_value_to_dict(item, include_position) for item in value]
+        return [_value_to_dict(item, include_position, redact_source) for item in value]
     if isinstance(value, tuple):
-        return tuple(_value_to_dict(item, include_position) for item in value)
+        return tuple(_value_to_dict(item, include_position, redact_source) for item in value)
+    if redact_source:
+        return None
     return value
 
 
@@ -72,6 +76,8 @@ class AstNode:
         start_offset=0,
         end_offset=0,
         source_text=None,
+        filename=None,
+        include_stack=(),
     ):
         self.line = line
         self.col = col
@@ -80,6 +86,8 @@ class AstNode:
         self.start_offset = start_offset
         self.end_offset = end_offset
         self.source_text = source_text
+        self.filename = filename
+        self.include_stack = tuple(include_stack)
 
     def accept(self, visitor):
         method_name = "visit_" + type(self).__name__
@@ -121,10 +129,12 @@ class AstNode:
                 continue
             yield slot, getattr(self, slot, None)
 
-    def to_dict(self, include_position=True):
+    def to_dict(self, include_position=True, *, redact_source=False):
+        """Serialize the AST, optionally retaining only node types and shape."""
+        include_position = include_position and not redact_source
         data = {"type": type(self).__name__}
         for name, value in self.iter_fields(include_position=include_position):
-            data[name] = _value_to_dict(value, include_position)
+            data[name] = _value_to_dict(value, include_position, redact_source)
         return data
 
     def structurally_equal(self, other, include_position=False):
@@ -193,13 +203,14 @@ class Include(AstNode):
 
 
 class EncryptedBlock(AstNode):
-    __slots__ = ("content", "body", "parse_status")
+    __slots__ = ("content", "body", "parse_status", "directive")
 
-    def __init__(self, content="", body=None, parse_status="opaque", **kw):
+    def __init__(self, content="", body=None, parse_status="opaque", directive="#ENCRYPT", **kw):
         super().__init__(**kw)
         self.content = content
         self.body = body or []
         self.parse_status = parse_status
+        self.directive = directive
 
 
 class LayerDef(AstNode):
@@ -268,6 +279,27 @@ class LayerAssignment(AstNode):
         self.expression = expression
 
 
+class DfmSpec(AstNode):
+    __slots__ = ("kind", "name", "variant", "arguments", "body")
+
+    def __init__(self, kind="FILL", name="", variant="", arguments=None, body=None, **kw):
+        super().__init__(**kw)
+        self.kind = kind
+        self.name = name
+        self.variant = variant
+        self.arguments = arguments or []
+        self.body = body or []
+
+
+class DfmClause(AstNode):
+    __slots__ = ("keywords", "arguments")
+
+    def __init__(self, keywords=None, arguments=None, **kw):
+        super().__init__(**kw)
+        self.keywords = keywords or []
+        self.arguments = arguments or []
+
+
 class RuleCheckBlock(AstNode):
     __slots__ = ("name", "comments", "body")
 
@@ -280,6 +312,23 @@ class RuleCheckBlock(AstNode):
     @property
     def description(self):
         return self.comments
+
+
+class PercLoad(AstNode):
+    __slots__ = ("function", "body")
+
+    def __init__(self, function="", body=None, **kw):
+        super().__init__(**kw)
+        self.function = function
+        self.body = body or []
+
+
+class PercGroup(AstNode):
+    __slots__ = ("items",)
+
+    def __init__(self, items=None, **kw):
+        super().__init__(**kw)
+        self.items = items or []
 
 
 class Connect(AstNode):
@@ -436,6 +485,14 @@ class FuncCall(Expression):
         self.args = args or []
 
 
+class BracketExpr(Expression):
+    __slots__ = ("items",)
+
+    def __init__(self, items=None, **kw):
+        super().__init__(**kw)
+        self.items = items or []
+
+
 class Constraint(AstNode):
     __slots__ = ("op", "value")
 
@@ -449,10 +506,16 @@ class ConstrainedExpr(Expression):
     __slots__ = ("expr", "constraints", "modifiers")
 
     def __init__(self, expr=None, constraints=None, modifiers=None, **kw):
+        from .modifiers import legacy_modifiers
         super().__init__(**kw)
         self.expr = expr
         self.constraints = constraints or []
-        self.modifiers = modifiers or []
+        self.modifiers = legacy_modifiers(modifiers or ())
+
+    @property
+    def modifier_nodes(self):
+        from .modifiers import modifier_nodes
+        return modifier_nodes(self.modifiers or ())
 
 
 class DRCOp(Expression):
@@ -460,11 +523,17 @@ class DRCOp(Expression):
 
     def __init__(self, op="", operands=None,
                  constraints=None, modifiers=None, **kw):
+        from .modifiers import legacy_modifiers
         super().__init__(**kw)
         self.op = op
         self.operands = operands or []
         self.constraints = constraints or []
-        self.modifiers = modifiers or []
+        self.modifiers = legacy_modifiers(modifiers or ())
+
+    @property
+    def modifier_nodes(self):
+        from .modifiers import modifier_nodes
+        return modifier_nodes(self.modifiers or ())
 
 
 class VarRef(AstNode):

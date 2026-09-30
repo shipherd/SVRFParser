@@ -5,6 +5,7 @@ with per-file statistics: size, parse time, statement count, warning count,
 AST node type distribution, and SVRF node ratio.
 """
 
+import argparse
 import json
 import os
 import re
@@ -17,6 +18,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from svrf_parser import parse_with_diagnostics
 from sample_corpus import iter_sample_files
+from report_privacy import ReportPrivacy
 from svrf_parser.svrf_constructs import count_svrf_constructs
 
 SAMPLES_DIR = None
@@ -71,8 +73,9 @@ def categorize_warnings(warnings):
     return cats
 
 
-def analyze_file(path):
+def analyze_file(path, *, privacy=None):
     """Analyze a single SVRF file and return metrics dict."""
+    privacy = privacy or ReportPrivacy()
     size = os.path.getsize(path)
     text = Path(path).read_text(encoding='utf-8', errors='replace')
 
@@ -90,7 +93,7 @@ def analyze_file(path):
         type_counts[type(node).__name__] += 1
 
     return {
-        "file": str(path),
+        "file": privacy.path(path),
         "size_bytes": size,
         "parse_time_s": round(elapsed, 3),
         "statements": n_stmts,
@@ -107,22 +110,34 @@ def find_sample_files():
     return [str(path) for path in iter_sample_files(SAMPLES_DIR)]
 
 
-def main():
+def main(argv=None):
+    global SAMPLES_DIR
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("root", help="Candidate file or recursive corpus directory.")
+    parser.add_argument("--show-private-details", action="store_true",
+                        help="Include source paths and exception text in output.")
+    args = parser.parse_args(argv)
+    SAMPLES_DIR = Path(args.root)
+    privacy = ReportPrivacy(show_private_details=args.show_private_details)
     if not SAMPLES_DIR.exists() or not (SAMPLES_DIR.is_dir() or SAMPLES_DIR.is_file()):
-        print(f"Sample file or directory not found: {SAMPLES_DIR}")
+        print("Sample file or directory not found at the requested location.")
         return 1
 
-    files = find_sample_files()
-    print(f"Found {len(files)} candidate files in {SAMPLES_DIR}\n")
+    try:
+        files = find_sample_files()
+    except Exception as error:
+        print(f"Cannot select candidate files: {privacy.exception(error)}")
+        return 1
+    print(f"Found {len(files)} candidate files.\n")
 
     results = []
     total_warnings = 0
     total_stmts = 0
 
     for path in files:
-        rel = os.path.relpath(path, SAMPLES_DIR) if SAMPLES_DIR.is_dir() else Path(path).name
+        rel = privacy.path(path, root=SAMPLES_DIR)
         try:
-            metrics = analyze_file(path)
+            metrics = analyze_file(path, privacy=privacy)
             results.append(metrics)
             total_warnings += metrics["total_warnings"]
             total_stmts += metrics["statements"]
@@ -131,8 +146,9 @@ def main():
                   f"{metrics['svrf_ratio']*100:5.1f}% SVRF  "
                   f"{metrics['parse_time_s']:.2f}s")
         except Exception as e:
-            print(f"  {rel:50s}  ERROR: {e}")
-            results.append({"file": str(path), "error": str(e)})
+            error = privacy.exception(e)
+            print(f"  {rel:50s}  ERROR: {error}")
+            results.append({"file": privacy.path(path), "error": error})
 
     # Summary
     print(f"\n{'='*70}")
@@ -152,22 +168,24 @@ def main():
 
     # Write JSON report
     report = {
-        "samples_dir": str(SAMPLES_DIR),
+        "samples_dir": str(SAMPLES_DIR) if args.show_private_details else "<redacted>",
+        "source_details_redacted": not args.show_private_details,
         "total_files": len(files),
         "total_statements": total_stmts,
         "total_warnings": total_warnings,
         "warning_category_totals": dict(cat_totals),
         "files": results,
     }
-    REPORT_PATH.write_text(json.dumps(report, indent=2, default=str),
-                           encoding='utf-8')
-    print(f"\nReport written to {REPORT_PATH}")
+    try:
+        REPORT_PATH.write_text(json.dumps(report, indent=2, default=str),
+                               encoding='utf-8')
+    except Exception as error:
+        print(f"Cannot write metrics report: {privacy.exception(error)}")
+        return 1
+    print("\nReport written." if not args.show_private_details else
+          f"\nReport written to {REPORT_PATH}")
     return 0
 
 
 if __name__ == '__main__':
-    if len(sys.argv) < 2:
-        print("Usage: python baseline.py <samples_dir_or_file>")
-        sys.exit(1)
-    SAMPLES_DIR = Path(sys.argv[1])
     sys.exit(main())

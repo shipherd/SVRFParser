@@ -74,7 +74,7 @@ class OperationParserMixin(OperationExpressionParserMixin, OperationModifierPars
         if not operands:
             return ast.LayerRef(name=start.value, **self._loc(start))
         if len(operands) == 1:
-            return operands[0]
+            return ast.UnaryOp(op=start.value, operand=operands[0], **self._loc(start))
         result = operands[0]
         for operand in operands[1:]:
             result = ast.BinaryOp(op=start.value, left=result, right=operand, **self._loc(start))
@@ -134,6 +134,7 @@ class OperationParserMixin(OperationExpressionParserMixin, OperationModifierPars
     def _parse_operation_from_schema(self, start, op_name, schema):
         modifier_starters = self._modifier_starters_for_operation(schema)
         strategy_handlers = {
+            "dfm_mat": self._parse_dfm_mat_operation,
             "device_layer": self._parse_device_layer_operation,
             "dfm_rdb": self._parse_dfm_rdb_operation,
             "pathchk": self._parse_pathchk_operation,
@@ -236,7 +237,7 @@ class OperationParserMixin(OperationExpressionParserMixin, OperationModifierPars
                 constraints.extend(self._parse_constraints())
                 continue
             if token.type == TT.SYMBOL and token.value == "[" and schema.bracket_modifier_mode == "expression":
-                modifiers.append(self._parse_expression(stop_on_newline=False))
+                modifiers.append(self._parse_expression(stop_on_newline=False, context="dfm"))
                 continue
             if token.type == TT.SYMBOL and token.value == "(" and schema.parenthesized_scalar_modifiers:
                 modifiers.append(self._parse_parenthesized_scalar_sequence())

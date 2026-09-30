@@ -11,6 +11,10 @@ The current parser path is:
 source text -> lexer -> segmenter -> statement/clause CST -> normalizer -> typed AST -> semantic validation
 ```
 
+Validation expands standalone includes before the lexer and retains a source
+map for diagnostics. The `parse*` APIs parse only the supplied source and do
+not read included files.
+
 ## Current State
 
 - No third-party runtime dependencies.
@@ -31,6 +35,20 @@ source text -> lexer -> segmenter -> statement/clause CST -> normalizer -> typed
 - Diagnostics carry structured location/provenance data, including
   `include_stack` and `metadata` for values such as unresolved symbol names.
 - AST traversal uses the canonical iterative `AstNode.walk()` implementation.
+- Scalar arithmetic follows the manual's left-to-right multiplicative
+  precedence, including `^` and `%`; DFM property bracket expressions retain
+  higher precedence for `^`.
+- DFM fill, spacing, optimization, and MAT syntax retains ordered clauses,
+  bracketed arguments, and conditional fragments instead of splitting them
+  into unrelated layer operations.
+- `PERC LOAD` retains case-sensitive procedure names, parallel groups, and
+  conditional selections without executing Tcl.
+- Quoted SVRF symbol names resolve case-insensitively without changing the
+  original quoted text or external filenames.
+- Conditional symbol resolution isolates mutually exclusive branches and
+  distinguishes definite definitions from conditional availability.
+- Shared operation contracts supply operand roles and semantic requirements.
+  Typed modifier views retain compatibility with the existing AST fields.
 - Packaged spec data lives under `svrf_parser/svrf_spec/data`. Generated spec
   payloads store the stable `$SVRF_MANUAL_ROOT` placeholder instead of a local
   manual path.
@@ -47,7 +65,9 @@ cases.
 - No third-party Python packages
 
 Use `python -B` in the commands below when you want to keep the checkout free of
-`__pycache__` directories while running tests or tools.
+`__pycache__` directories while running tests or tools. Set
+`$env:PYTHONDONTWRITEBYTECODE = "1"` in PowerShell as well to prevent bytecode
+from test subprocesses.
 
 ## Project Layout
 
@@ -60,13 +80,19 @@ svrf_parser/
   normalizer.py                 CST-to-AST normalization
   parser.py                     Main parser orchestration
   expression_parser.py          Pratt-style expression parsing
+  dfm_spec_parser.py            Ordered DFM specifications and MAT clauses
+  perc_parser.py                PERC LOAD procedure selections and groups
   operation_*.py                Rule-operation parsing and normalization
   statement_*.py                Statement shape and handler logic
   ast.py, ast_nodes.py          AST node model and compatibility exports
   visitor.py                    Visitor base class
   diagnostics.py                Structured diagnostics
   include_resolver.py           INCLUDE/#INCLUDE expansion
+  include_syntax.py             Embedded filename-reference include syntax
+  source_map.py                 Included-source locations and provenance
   semantic*.py                  Symbol and semantic validation passes
+  symbol_availability.py        Guarded definitions and conditional availability
+  modifiers.py                  Typed modifier views and compatibility adapters
   validation_*.py               Public validation pipeline and helpers
   svrf_constructs.py            Shared SVRF construct classification
   svrf_spec/
@@ -90,6 +116,7 @@ sample_corpus.py                Extension-neutral real-corpus file selection
 test_samples.py                 Parser corpus harness
 baseline.py                     Corpus metrics snapshot helper
 coverage_analysis.py            Manual keyword coverage helper
+report_privacy.py               Redacted corpus-report formatting
 ```
 
 ## Quick Start
@@ -151,8 +178,8 @@ tree = parse(text, strict=True)
 
 ## Validation
 
-`validate_svrf` and `validate_svrf_file` parse input, follow includes when
-possible, build symbol information, run conservative semantic checks, apply the
+`validate_svrf` and `validate_svrf_file` expand includes when enabled, parse the
+aggregate input, build symbol information, run conservative semantic checks, apply the
 unresolved-symbol policy, and return a `ValidationResult`.
 
 ```python
@@ -162,6 +189,7 @@ result = validate_svrf_file(
     "path/to/rules.drc",
     strict=True,
     follow_includes=True,
+    run_directory="path/to/run-directory",
     unresolved_policy="practical",
 )
 
@@ -175,11 +203,46 @@ else:
 The validation API accepts:
 
 - `strict`: parser and semantic recovery should be treated more aggressively.
-- `follow_includes`: follow `INCLUDE` and `#INCLUDE` when the filename is a
-  real path.
+- `follow_includes`: expand standalone `INCLUDE` and `#INCLUDE` before parsing.
+  Anonymous text requires an explicit `run_directory` to enable expansion.
+- `run_directory`: base for all relative include paths, including nested
+  includes. Defaults to the current working directory, not the directory of
+  each included file.
 - `unresolved_policy`: `"strict"` or `"practical"`.
 - `symbol_manifest`: `None`, a mapping, a manifest path, or a
   `SymbolManifest` instance.
+
+Standalone includes may supply partial syntax, including rule-body statements,
+macro bodies, and pieces of expressions. Includes inside conditionals and
+recognized plaintext encrypted blocks are expanded too. Expansion occurs
+before block-comment removal but ignores line-commented include statements.
+Both conditional branches remain in the AST; validation does not execute the
+preprocessor or interpret TVF/Tcl.
+
+Branch scopes are validated independently and joined only after all alternatives
+have been checked. Definitions present in every alternative are definite;
+definitions present in only some alternatives produce
+`semantic.reference.conditional` findings when referenced without a sufficient
+guard. A reference to a definition in a mutually exclusive branch produces
+`semantic.reference.unavailable_branch`. These warnings become errors in strict
+mode and are not suppressed by practical unresolved-symbol policies or manifests.
+Practical mode groups repeated conditional notices by file, include stack,
+symbol, code, and reference context; `metadata["occurrence_count"]` records the
+number of references represented by a grouped notice. Strict mode retains
+individual diagnostics. Corpus audits classify these notices separately from
+confirmed semantic rule errors.
+Analysis does not evaluate control-variable values or correlate separate
+conditional statements, so conditional findings are not proof that a specific
+Calibre run will fail.
+
+Embedded includes used as filename or cell-list arguments are retained as
+`Include(embedded=True)` nodes rather than parsed as rule files. Opaque
+encrypted payloads are not expanded. Missing files and include cycles produce
+diagnostics with the original file location and include stack.
+
+With include expansion enabled, `ValidationResult.program` is the aggregate
+AST, not just the root file's statements. Set `follow_includes=False` or use a
+`parse*` API to retain standalone include nodes without opening their targets.
 
 `ValidationResult` exposes:
 
@@ -271,6 +334,12 @@ All AST nodes inherit from `AstNode` and carry source position metadata:
 - `end_line`, `end_col`
 - `start_offset`, `end_offset`
 - `source_text`
+- `filename`, `include_stack`
+
+Validation maps node locations back to the original files. A node spanning
+multiple files is anchored to the file where it starts; its source span is
+bounded by that file. Position/provenance fields are excluded from
+`to_dict(include_position=False)` and semantic structural comparisons.
 
 Common top-level nodes include:
 
@@ -278,6 +347,7 @@ Common top-level nodes include:
 - `Define`, `IfDef`, `Include`, `EncryptedBlock`
 - `LayerDef`, `LayerMap`, `VariableDef`
 - `Directive`, `LayerAssignment`, `RuleCheckBlock`
+- `DfmSpec`, `DfmClause`, `PercLoad`, `PercGroup`
 - `Connect`, `Device`, `DMacro`, `MacroCall`
 - `Group`, `Attach`, `TraceProperty`
 
@@ -285,6 +355,7 @@ Common top-level nodes include:
 between `#ENCRYPT` / `#DECRYPT` and `#ENDCRYPT` parses cleanly as plaintext
 SVRF, `body` contains the parsed statements and `parse_status` is `"plaintext"`.
 Otherwise `body` is empty and `parse_status` is `"opaque"`.
+`directive` preserves whether the block started with `#ENCRYPT` or `#DECRYPT`.
 
 Expression and rule-body nodes include:
 
@@ -292,7 +363,28 @@ Expression and rule-body nodes include:
 - `NumberLiteral`, `StringLiteral`, `FuncCall`
 - `Constraint`, `ConstrainedExpr`, `DRCOp`
 - `PropertyBlock`, `IfExpr`
+- `BracketExpr`
 - `VarRef`, `ErrorNode`
+
+`DfmSpec` records the specification kind, variant, name, header arguments, and
+ordered body. `DfmClause` records clause keywords and arguments; a clause with
+no keywords represents a conditional argument fragment. Shared clauses after
+conditional declarations stay at their original source level.
+`BracketExpr.items` preserves bracket boundaries and spacing intervals.
+
+`PercLoad.function` is an SVRF name; its ordered body retains selection
+keywords, procedure names, parallel `PercGroup` boundaries, and conditionals.
+Unquoted procedure names keep their original case as `StringLiteral` values.
+Unquoted cell/text filter operands retain their case as `LayerRef` nodes so
+printing does not turn possible string-variable references into quoted strings.
+
+`DRCOp.modifiers` and `ConstrainedExpr.modifiers` retain their existing list
+representation, including `("BY", expression)` tuples. The additive
+`modifier_nodes` property provides immutable `NamedModifier` / `RawModifier`
+views from `svrf_parser.modifiers`. It reflects changes to the legacy list and
+does not add fields to AST serialization or duplicate nodes during traversal.
+Modifier argument contexts are shared by annotation, validation, and printing;
+unquoted `BY NET` is a literal mode rather than a scalar symbol reference.
 
 Use the visitor API:
 
@@ -388,11 +480,16 @@ python -B test_samples.py <path-to-svrf-file> --fail-on-warnings
 The parser gate returns a non-zero exit code if no candidate files are selected,
 if parsing raises an exception, or if parser warnings are present when
 `--fail-on-warnings` is used.
+Directory selection also includes support files, documentation, scripts, and
+binary artifacts. A mixed folder is not expected to pass as an all-SVRF corpus;
+classify findings by content rather than adding extension filters. Conversely,
+parsing without warnings does not prove that an input contains meaningful SVRF.
 
 Semantic corpus gate for a directory or one file:
 
 ```powershell
 python -B audit_sample_corpus.py <path-to-svrf-samples-or-file> `
+  --run-directory <path-to-run-directory> `
   --unresolved-policy practical `
   --summary-only `
   --fail-on-errors
@@ -401,10 +498,52 @@ python -B audit_sample_corpus.py <path-to-svrf-samples-or-file> `
 The audit gate returns a non-zero exit code when audited files are invalid or
 emit semantic errors. Warnings are summarized and bucketed so remaining external
 or companion-symbol context can be reviewed without failing the gate.
+Omit `--run-directory` to resolve relative includes from the current directory.
+The practical policy does not suppress known declaration-order violations,
+invalid connectivity shapes, or provably output-free rule bodies.
 
 Directory targets are recursive and extension-neutral. Files named `a.15a`,
 `b.13a`, `deck`, `rules.custom`, or any other regular filename are all passed
 to the parser/validator.
+
+Parser success is a structural check, not a full semantic audit or a comparison
+with Calibre. Check recovered `ErrorNode` nodes, rule-name completeness, and
+semantic diagnostics separately. Opaque encrypted payloads cannot be verified.
+Private decks and their corpus inventories are not committed; regressions use
+synthetic inputs under `tests/`.
+
+## Privacy
+
+The parser gate, semantic audit, and baseline metrics command redact source
+details by default. Files receive run-local labels such as `file-0001`; unresolved
+symbols receive labels such as `symbol-0001`. Exception output retains the
+exception type rather than potentially sensitive text. Metrics retain counts,
+sizes, and timings, but do not store the input root or filenames.
+
+Use `--show-private-details` on these commands only for local debugging. This
+option restores filenames, symbol names, and exception text; do not share its
+output without reviewing it. Aggregate metrics can still describe a private
+corpus, so review redacted reports before publishing them too.
+
+Parser APIs preserve original source data for normal use. For a source-redacted
+export, request it explicitly:
+
+```python
+ast_shape = tree.to_dict(redact_source=True)
+diagnostic_data = diagnostic.to_dict(redact_source=True)
+```
+
+Redacted AST exports retain node types and container shape, replace scalar
+payloads with `None`, and omit position/provenance fields. Redacted diagnostics
+retain codes, severity, and numeric positions, but remove messages, filenames,
+snippets, include stacks, and metadata. `to_dict(include_position=False)` alone
+is not redaction: names, include targets, literal values, and encrypted content
+can still appear in the AST.
+
+Generated reports, bytecode, caches, and local-only `tools/` are ignored by Git.
+Ignored files can still enter a folder archive. Prefer distributing a reviewed
+`git archive`, and keep samples/manuals outside the checkout. Ignore rules do
+not remove information already committed to Git history or published elsewhere.
 
 ## Tools
 
@@ -433,12 +572,16 @@ file when strict mode is off.
 Current covered families include:
 
 - Preprocessor: `#DEFINE`, `#IFDEF`, `#IFNDEF`, `#ELSE`, `#ENDIF`,
-  `#INCLUDE`, `#ENCRYPT`, `#ENDCRYPT`
+  `#INCLUDE`, `#ENCRYPT`, `#DECRYPT`, `#ENDCRYPT`
 - Include statements: `INCLUDE` and `#INCLUDE`
 - Layer definitions and maps: `LAYER`, `LAYER MAP`, `DATATYPE`, `TEXTTYPE`
-- Variables and layer assignments
+- Variables and layer assignments, scalar arithmetic including `%`, and
+  context-specific DFM power precedence
 - Boolean and spatial layer operators: `AND`, `OR`, `NOT`, `XOR`, `INSIDE`,
   `OUTSIDE`, `OUT`, `INTERACT`, `TOUCH`, `ENCLOSE`, `CUT`, `STAMP`, `IN`
+- Prefix, infix, and postfix Boolean forms, including `(M1 M2 OR M3)`;
+  single-layer Boolean operations retain their operation rather than becoming
+  bare layer references
 - Compound spatial forms such as `INSIDE EDGE`, `OUTSIDE EDGE`, `COIN EDGE`,
   `TOUCH INSIDE EDGE`, `TOUCH OUTSIDE EDGE`, `NOT TOUCH`, `NOT IN`,
   `NOT OUT`, `NOT INSIDE`, `NOT INTERACT`, `NOT ENCLOSE`, and
@@ -447,13 +590,19 @@ Current covered families include:
   `PATHCHK`, `NET AREA`, `NET INTERACT`, and `NET AREA RATIO`
 - Geometry operations such as `SIZE`, `GROW`, `SHRINK`, `SHIFT`,
   `EXPAND EDGE`, `CONVEX EDGE`, `RECTANGLE`, `RECTANGLE ENCLOSURE`,
-  `RECTANGLES`, `EXTENT`, and `EXTENTS`
+  `RECTANGLES`, `EXTENT`, `EXTENTS`, and `FLATTEN`
 - Measurement and constraint forms such as `AREA`, `PERIMETER`, `LENGTH`,
   `ANGLE`, `VERTEX`, comparison constraints, and modifier chains
 - DFM forms such as `DFM PROPERTY`, `DFM PROPERTY NET`, `DFM DP`, and
-  `DFM RDB`
+  `DFM RDB`; ordered `DFM SPEC FILL`, `DFM SPEC SPACE`, and
+  `DFM SPEC OPTIMIZE` declarations, legacy REGION/WRAP/DATA variants,
+  `DFM MAT` continuation clauses, and complete `DFM FILL REGION` / `WRAP` heads
 - `WITH` sub-expressions including `WITH WIDTH`, `WITH EDGE`, `WITH TEXT`,
   and `WITH NEIGHBOR`
+- Cell selections such as `INSIDE CELL` and `NOT INSIDE CELL`, and
+  `WITH TEXT` / `NOT WITH TEXT` with unquoted `?` patterns and text layers
+- `PERC LOAD` initialization, selections, parallel groups, `SELECTTYPE`, and
+  conditional procedure lists
 - Connectivity: `CONNECT`, `SCONNECT`, `ATTACH`, and `GROUP`
 - Device constructs: `DEVICE`, `DEVICE LAYER`, `DMACRO`, `CMACRO`, `FMACRO`,
   and `TRACE PROPERTY`
@@ -471,10 +620,27 @@ Current covered families include:
 - Limited/opaque handling for `TVF`, `POLYGON`, and other forms that can define
   symbols outside visible SVRF text
 
+Whole TVF rule files beginning with `#!tvf` are not supported. The parser does
+not run Tcl, expand dynamically generated SVRF, verify PERC procedure
+implementations, or decrypt opaque payloads. Ordered DFM syntax is represented
+structurally; detailed fill/optimizer clause contracts and their geometric
+behavior are not fully validated.
+
 The semantic validator adds conservative checks for includes, include cycles,
 shared symbols across includes, duplicate definitions, macro parameters,
-undefined references, rule-description variable references, selected directive
-contracts, operation operands, value constraints, and the SVRF construct ratio.
+undefined references, quoted layer operands, variable declaration order,
+rule-description variable references, assignment-only rule bodies, SCONNECT
+syntax variants, selected directive contracts, operation operands, value
+constraints, conditional availability, and the SVRF construct ratio. Macro variable-order checks are
+deferred because bodies are expanded at invocation; this validator does not
+execute macro calls.
+
+`SvrfPrinter` preserves expression grouping, variable string lists and
+`ENVIRONMENT`, quoted rule names and string escapes, SCONNECT `LINK`/`ABUT ALSO`,
+FMACRO call syntax, and encrypted-block introducers. It is not a lossless
+formatter for every supported or opaque construct.
+It also preserves DFM clause order, brackets, conditional fragments, and PERC
+procedure groups.
 
 ## Public API
 
@@ -484,10 +650,10 @@ contracts, operation operands, value constraints, and the SVRF construct ratio.
 | `parse_file(path, strict=False)` | Parse an SVRF file and return a `Program` node. |
 | `parse_with_diagnostics(text, filename="<input>", strict=False)` | Parse text and return `(Program, warning_diagnostics)`. |
 | `parse_file_with_diagnostics(path, strict=False)` | Parse a file and return `(Program, warning_diagnostics)`. |
-| `validate_svrf(text, filename="<input>", strict=False, follow_includes=True, unresolved_policy="strict", symbol_manifest=None)` | Validate text and return a `ValidationResult`. |
-| `validate_svrf_file(path, strict=False, follow_includes=True, unresolved_policy="strict", symbol_manifest=None)` | Validate a file and return a `ValidationResult`. |
-| `is_valid_svrf(text, filename="<input>", strict=False, follow_includes=True, unresolved_policy="strict", symbol_manifest=None)` | Validate text and return `bool`. |
-| `is_valid_svrf_file(path, strict=False, follow_includes=True, unresolved_policy="strict", symbol_manifest=None)` | Validate a file and return `bool`. |
+| `validate_svrf(text, filename="<input>", strict=False, follow_includes=True, unresolved_policy="strict", symbol_manifest=None, run_directory=None)` | Validate text and return a `ValidationResult`. |
+| `validate_svrf_file(path, strict=False, follow_includes=True, unresolved_policy="strict", symbol_manifest=None, run_directory=None)` | Validate a file and return a `ValidationResult`. |
+| `is_valid_svrf(text, filename="<input>", strict=False, follow_includes=True, unresolved_policy="strict", symbol_manifest=None, run_directory=None)` | Validate text and return `bool`. |
+| `is_valid_svrf_file(path, strict=False, follow_includes=True, unresolved_policy="strict", symbol_manifest=None, run_directory=None)` | Validate a file and return `bool`. |
 | `AstVisitor` | Base class for AST visitors. Override `visit_NodeType` methods. |
 
 ## Notes For Contributors
@@ -496,6 +662,9 @@ contracts, operation operands, value constraints, and the SVRF construct ratio.
   or semantic behavior.
 - Prefer structured diagnostics and `Diagnostic.metadata` over parsing rendered
   message text.
+- Keep operation requirements and operand roles in the packaged operation
+  contracts, and use the shared modifier adapters rather than interpreting
+  modifier tuples independently in each pass.
 - Prefer `AstNode.walk()` for full-tree traversal so tooling and tests use the
   same traversal semantics.
 - Keep sample-corpus candidate selection in `sample_corpus.py` rather

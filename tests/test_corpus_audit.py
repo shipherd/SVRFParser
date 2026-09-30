@@ -5,9 +5,12 @@ from __future__ import annotations
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
+from unittest.mock import patch
 
 from svrf_parser.diagnostics import Diagnostic, SEVERITY_ERROR, SEVERITY_WARNING
 from audit_sample_corpus import (
+    audit_corpus,
+    audit_path,
     audit_validation_result,
     classify_diagnostic,
     extract_undefined_symbol_name,
@@ -43,6 +46,26 @@ class _FakeAuditRoot:
 
 
 class CorpusAuditTests(unittest.TestCase):
+    def test_audit_path_forwards_run_directory(self):
+        path = Path("sample.15a")
+        directory = Path("run")
+        with patch("audit_sample_corpus.validate_svrf_file") as validate, patch("audit_sample_corpus.audit_validation_result"):
+            audit_path(path, run_directory=directory)
+        validate.assert_called_once_with(
+            path, strict=False, unresolved_policy="strict", symbol_manifest=None,
+            run_directory=directory,
+        )
+
+    def test_audit_corpus_forwards_run_directory_to_each_file(self):
+        path = Path("sample.13a")
+        directory = Path("run")
+        with patch("audit_sample_corpus.iter_sample_files", return_value=[path]), patch("audit_sample_corpus.audit_path") as audit:
+            audit_corpus(Path("samples"), run_directory=directory)
+        audit.assert_called_once_with(
+            path, unresolved_policy="strict", symbol_manifest=None,
+            run_directory=directory,
+        )
+
     def test_iter_sample_files_includes_all_regular_files(self):
         sample_names = [
             "a.drc",

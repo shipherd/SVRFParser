@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 from .exceptions import ParseError
+from .dfm_spec_parser import DfmSpecParserMixin, _DFM_MODES
+from .perc_parser import PercParserMixin
 from .statement_schema import STATEMENT_SCHEMA_REGISTRY
 from .statement_shape_handlers import StatementShapeParserMixin
 from .tokens import TokenType
@@ -11,7 +13,7 @@ TT = TokenType
 NO_UNIT_DISPATCH = object()
 
 
-class StatementParserMixin(StatementShapeParserMixin):
+class StatementParserMixin(StatementShapeParserMixin, DfmSpecParserMixin, PercParserMixin):
     """Statement CST dispatch and concrete statement-family handlers."""
 
     def _consume_head_from_statement_cst(self, expected_prefix=None):
@@ -71,9 +73,10 @@ class StatementParserMixin(StatementShapeParserMixin):
         mode = statement_cst.mode if statement_cst is not None else "top"
         return self._parse_preprocessor(mode)
 
-    def _parse_ifdef_from_preprocessor(self):
-        statement_cst = self._active_statement_cst()
-        mode = statement_cst.mode if statement_cst is not None else "top"
+    def _parse_ifdef_from_preprocessor(self, mode=None):
+        if mode is None:
+            statement_cst = self._active_statement_cst()
+            mode = statement_cst.mode if statement_cst is not None else "top"
         return self._parse_ifdef(mode)
 
     def _parse_expression_statement_from_cst(self):
@@ -95,6 +98,14 @@ class StatementParserMixin(StatementShapeParserMixin):
         return NO_UNIT_DISPATCH
 
     def _parse_statement(self, mode):
+        if mode == "perc_load":
+            return self._parse_perc_load_item()
+        if mode in _DFM_MODES:
+            if self._cur().type == TT.PREPROCESSOR:
+                return self._parse_preprocessor(mode)
+            if self._cur().type == TT.RULE_COMMENT:
+                return self._parse_rule_comment_statement()
+            return self._parse_dfm_fill_clause(mode)
         statement_cst = self._statement_cst_at_current(mode)
         unit_stmt = self._parse_statement_from_cst(mode, statement_cst)
         if unit_stmt is not NO_UNIT_DISPATCH:

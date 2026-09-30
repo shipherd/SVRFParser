@@ -40,21 +40,22 @@ class Diagnostic:
     def has_location(self):
         return self.line > 0 and self.col > 0
 
-    def to_dict(self):
+    def to_dict(self, *, redact_source=False):
+        """Serialize with optional removal of source-derived text and metadata."""
         return {
             "severity": self.severity,
             "code": self.code,
-            "message": self.message,
-            "filename": self.filename,
+            "message": "<redacted>" if redact_source else self.message,
+            "filename": "<redacted>" if redact_source else self.filename,
             "line": self.line,
             "col": self.col,
             "end_line": self.end_line,
             "end_col": self.end_col,
             "start_offset": self.start_offset,
             "end_offset": self.end_offset,
-            "snippet": self.snippet,
-            "include_stack": self.include_stack,
-            "metadata": self.metadata or {},
+            "snippet": None if redact_source else self.snippet,
+            "include_stack": () if redact_source else self.include_stack,
+            "metadata": {} if redact_source else self.metadata or {},
         }
 
     def with_include_stack(self, include_stack):

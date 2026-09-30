@@ -3,14 +3,13 @@
 from __future__ import annotations
 
 from . import ast
+from .modifiers import NamedModifier, RawModifier, as_modifier
 from .semantic_symbols import (
     _collect_statement_placeholders,
-    _normalized_scope_name,
     _property_function_skipped_arg_indexes,
-    _tuple_value_context,
 )
 
-_SCALAR_BINARY_OPS = frozenset({"+", "-", "*", "/", "%"})
+_SCALAR_BINARY_OPS = frozenset({"+", "-", "*", "/", "^", "%"})
 _SCALAR_UNARY_OPS = frozenset({"+", "-", "~"})
 
 
@@ -36,9 +35,9 @@ class ValueValidationMixin:
                 node, scope = payload
                 self._validate_node(node, scope, pending)
                 continue
-            if task == "merge_scope":
-                scope, child_scope = payload
-                scope.merge_from(child_scope)
+            if task == "merge_branches":
+                scope, branches = payload
+                scope.merge_branches(branches)
 
     def _push_statement_tasks(self, pending, statements, scope):
         for statement in reversed(statements):
@@ -53,6 +52,9 @@ class ValueValidationMixin:
         pending = [(value, context)]
         while pending:
             current, current_context = pending.pop()
+            if isinstance(current, (NamedModifier, RawModifier)):
+                pending.append((current.value, current.context(current_context)))
+                continue
             if isinstance(current, ast.AstNode):
                 current_context = self.expression_context_for(current, current_context)
                 if isinstance(current, ast.ErrorNode):
@@ -71,8 +73,18 @@ class ValueValidationMixin:
                         context=current_context,
                     )
                     continue
+                if isinstance(current, ast.StringLiteral):
+                    tags = self.expression_contexts.get(current) if self.expression_contexts else ()
+                    if current_context in {"layer", "rule_body_operation", "scalar"} and "directive_argument" not in tags:
+                        self._warn_unknown_reference(
+                            "semantic.reference.undefined", current.value, current, scope,
+                            context=current_context, quoted=True,
+                        )
+                    continue
                 if isinstance(current, ast.VarRef):
-                    if not scope.knows_variable(_normalized_scope_name(current.name)):
+                    if not scope.knows_variable(current.name) and not self._warn_conditional_symbol(
+                        ("variables",), current.name, current, scope, context="scalar",
+                    ):
                         self.warning(
                             "semantic.varref.undefined",
                             f"Description variable reference ^{current.name} has no matching VARIABLE",
@@ -93,7 +105,7 @@ class ValueValidationMixin:
                     pending.append((current.operand, operand_context))
                     continue
                 if isinstance(current, ast.ConstrainedExpr):
-                    for modifier in reversed(current.modifiers):
+                    for modifier in reversed(current.modifier_nodes):
                         pending.append((modifier, "generic"))
                     for constraint in reversed(current.constraints):
                         pending.append((constraint, "generic"))
@@ -118,33 +130,24 @@ class ValueValidationMixin:
                 continue
             if isinstance(current, tuple):
                 if len(current) == 2 and isinstance(current[0], str):
-                    pending.append((current[1], _tuple_value_context(current[0], current_context)))
+                    pending.append((as_modifier(current), current_context))
                     continue
                 pending.extend((item, current_context) for item in reversed(current))
 
     def _validate_if_expr(self, node, scope, pending):
         self._validate_value(node.condition, scope)
-
-        then_scope = scope.child()
-        for name in _collect_statement_placeholders(node.then_body):
-            then_scope.define_placeholder(name)
-        pending.append(("merge_scope", (scope, then_scope)))
-        self._push_statement_tasks(pending, node.then_body, then_scope)
-
-        else_scope = scope.child()
-        for name in _collect_statement_placeholders(node.else_body):
-            else_scope.define_placeholder(name)
-        pending.append(("merge_scope", (scope, else_scope)))
-        self._push_statement_tasks(pending, node.else_body, else_scope)
-
-        for branch in reversed(node.elseifs):
-            branch_scope = scope.child()
-            pending.append(("merge_scope", (scope, branch_scope)))
+        bodies = [node.then_body]
+        for branch in node.elseifs:
             if isinstance(branch, tuple) and len(branch) == 2:
                 condition, body = branch
-                for name in _collect_statement_placeholders(body):
-                    branch_scope.define_placeholder(name)
                 self._validate_value(condition, scope)
-                self._push_statement_tasks(pending, body, branch_scope)
+                bodies.append(body)
             else:
-                self._validate_value(branch, branch_scope)
+                self._validate_value(branch, scope)
+        bodies.append(node.else_body)
+        branches = [scope.child() for _ in bodies]
+        pending.append(("merge_branches", (scope, branches)))
+        for body, branch_scope in reversed(list(zip(bodies, branches))):
+            for name in _collect_statement_placeholders(body, include_conditionals=False):
+                branch_scope.define_placeholder(name)
+            self._push_statement_tasks(pending, body, branch_scope)

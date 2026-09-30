@@ -202,8 +202,8 @@ class ValidationTests(unittest.TestCase):
             "  TMP = SIZE LAYER_A BY LAYER_B\n"
             "  CONNECT LAYER_A LAYER_B BY VIA_L\n"
             "}\n"
-            "#ENDIF\n"
             "CMACRO WIDTH_CHECK M1 M2 VIA1\n"
+            "#ENDIF\n"
         )
         result = validate_svrf(text, strict=True)
         self.assertTrue(result.valid)
@@ -389,7 +389,7 @@ class ValidationTests(unittest.TestCase):
         self.assertEqual("WIDTH_CONST", undefined_symbol_name(diagnostic))
 
     def test_validate_classifies_same_file_local_scope_only_reference(self):
-        text = "LAYER M1 1\nRULE1 {\n  LOCAL_TMP = COPY M1\n}\nTMP = LOCAL_TMP\n"
+        text = "LAYER M1 1\nRULE1 {\n  LOCAL_TMP = COPY M1\n  COPY LOCAL_TMP\n}\nTMP = LOCAL_TMP\n"
         result = validate_svrf(text, strict=False)
         self.assertTrue(result.valid)
         codes = {diag.code for diag in result.warnings}
@@ -897,22 +897,22 @@ class ValidationTests(unittest.TestCase):
         self.assertIn("semantic.drc.missing_modifier", {diag.code for diag in result.errors})
 
     def test_validate_file_follows_include_for_macro_resolution(self):
-        result = validate_svrf_file(FIXTURES / "root_with_macro_include.svrf")
+        result = validate_svrf_file(FIXTURES / "root_with_macro_include.svrf", run_directory=FIXTURES)
         self.assertTrue(result.valid)
         self.assertNotIn("semantic.macro.undefined", {diag.code for diag in result.errors})
 
     def test_validate_file_follows_include_for_layer_resolution(self):
-        result = validate_svrf_file(FIXTURES / "root_with_layer_include.svrf", strict=True)
+        result = validate_svrf_file(FIXTURES / "root_with_layer_include.svrf", strict=True, run_directory=FIXTURES)
         self.assertTrue(result.valid)
         self.assertNotIn("semantic.connect.unknown_layer", {diag.code for diag in result.errors})
 
     def test_validate_file_reports_missing_include(self):
-        result = validate_svrf_file(FIXTURES / "root_missing_include.svrf")
+        result = validate_svrf_file(FIXTURES / "root_missing_include.svrf", run_directory=FIXTURES)
         self.assertFalse(result.valid)
         self.assertIn("validation.include.missing_file", {diag.code for diag in result.errors})
 
     def test_validate_file_reports_nested_include_stack(self):
-        result = validate_svrf_file(FIXTURES / "root_nested_missing.svrf")
+        result = validate_svrf_file(FIXTURES / "root_nested_missing.svrf", run_directory=FIXTURES)
         self.assertFalse(result.valid)
         diag = next(
             diag
@@ -927,7 +927,7 @@ class ValidationTests(unittest.TestCase):
         self.assertIn("root_nested_missing.svrf", str(diag))
 
     def test_validate_file_reports_include_cycle(self):
-        result = validate_svrf_file(FIXTURES / "cycle_a.svrf")
+        result = validate_svrf_file(FIXTURES / "cycle_a.svrf", run_directory=FIXTURES)
         self.assertFalse(result.valid)
         self.assertIn("validation.include.cycle", {diag.code for diag in result.errors})
 
@@ -944,7 +944,7 @@ class ValidationTests(unittest.TestCase):
                     lines.append(f'INCLUDE "f{idx + 1}.svrf"\n')
                 (root / f"f{idx}.svrf").write_text("".join(lines), encoding="utf-8")
 
-            result = validate_svrf_file(root / "f0.svrf", strict=True)
+            result = validate_svrf_file(root / "f0.svrf", strict=True, run_directory=root)
             self.assertTrue(result.valid)
             self.assertEqual([], result.errors)
         finally:

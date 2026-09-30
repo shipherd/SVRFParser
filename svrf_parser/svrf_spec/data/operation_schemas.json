@@ -1,5 +1,169 @@
 {
+  "contracts": {
+    "DEVICE LAYER": {
+      "min_modifiers": 1
+    },
+    "DFM DV": {
+      "min_operands": 1
+    },
+    "DFM PROPERTY": {
+      "min_operands": 1
+    },
+    "DFM PROPERTY NET": {
+      "min_operands": 1
+    },
+    "DFM SPACE": {
+      "min_operands": 1
+    },
+    "DFM TEXT": {
+      "min_operands": 1,
+      "operand_roles": [
+        "layer"
+      ],
+      "variadic_operand_role": "literal"
+    },
+    "INSIDE CELL": {
+      "operand_roles": [
+        "layer"
+      ],
+      "variadic_operand_role": "literal"
+    },
+    "NET": {
+      "min_operands": 1,
+      "operand_roles": [
+        "layer"
+      ],
+      "variadic_operand_role": "literal"
+    },
+    "NET AREA": {
+      "min_operands": 1,
+      "min_constraints": 1,
+      "operand_roles": [
+        "layer"
+      ],
+      "variadic_operand_role": "literal"
+    },
+    "NET AREA RATIO": {
+      "min_operands": 1,
+      "min_constraints": 1,
+      "operand_roles": [
+        "layer"
+      ],
+      "variadic_operand_role": "literal"
+    },
+    "NET INTERACT": {
+      "min_operands": 1,
+      "min_constraints": 1,
+      "operand_roles": [
+        "layer"
+      ],
+      "variadic_operand_role": "literal"
+    },
+    "NOT INSIDE CELL": {
+      "operand_roles": [
+        "layer"
+      ],
+      "variadic_operand_role": "literal"
+    },
+    "NOT WITH TEXT": {
+      "requires_content": true,
+      "operand_roles": [
+        "layer",
+        "literal",
+        "layer"
+      ],
+      "single_operand_role": "literal"
+    },
+    "NOT OUT CELL": {
+      "operand_roles": [
+        "layer"
+      ],
+      "variadic_operand_role": "literal"
+    },
+    "NOT OUTSIDE CELL": {
+      "operand_roles": [
+        "layer"
+      ],
+      "variadic_operand_role": "literal"
+    },
+    "OUT CELL": {
+      "operand_roles": [
+        "layer"
+      ],
+      "variadic_operand_role": "literal"
+    },
+    "OUTSIDE CELL": {
+      "operand_roles": [
+        "layer"
+      ],
+      "variadic_operand_role": "literal"
+    },
+    "PATHCHK": {
+      "min_operands": 1,
+      "min_modifiers": 1
+    },
+    "WITH EDGE": {
+      "requires_content": true
+    },
+    "WITH NEIGHBOR": {
+      "requires_content": true
+    },
+    "WITH TEXT": {
+      "requires_content": true,
+      "operand_roles": [
+        "layer",
+        "literal",
+        "layer"
+      ],
+      "variadic_operand_role": "literal",
+      "single_operand_role": "literal"
+    },
+    "WITH WIDTH": {
+      "requires_content": true
+    }
+  },
   "entries": [
+    {
+      "allow_nonstatement_expression_newline": false,
+      "bracket_modifier_mode": "none",
+      "family": "fixed",
+      "head_prefix": [
+        "DFM",
+        "FILL",
+        "REGION"
+      ],
+      "modifier_family": "default",
+      "name": "DFM FILL REGION",
+      "parenthesized_scalar_modifiers": false,
+      "parse_strategy": "default"
+    },
+    {
+      "allow_nonstatement_expression_newline": false,
+      "bracket_modifier_mode": "none",
+      "family": "fixed",
+      "head_prefix": [
+        "DFM",
+        "FILL",
+        "WRAP"
+      ],
+      "modifier_family": "default",
+      "name": "DFM FILL WRAP",
+      "parenthesized_scalar_modifiers": false,
+      "parse_strategy": "default"
+    },
+    {
+      "allow_nonstatement_expression_newline": false,
+      "bracket_modifier_mode": "none",
+      "family": "fixed",
+      "head_prefix": [
+        "DFM",
+        "MAT"
+      ],
+      "modifier_family": "default",
+      "name": "DFM MAT",
+      "parenthesized_scalar_modifiers": false,
+      "parse_strategy": "dfm_mat"
+    },
     {
       "allow_nonstatement_expression_newline": false,
       "bracket_modifier_mode": "none",

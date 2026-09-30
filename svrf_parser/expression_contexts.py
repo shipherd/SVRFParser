@@ -5,12 +5,15 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 
 from . import ast
+from .modifiers import NamedModifier, RawModifier, as_modifier
+from .operation_schema import OPERATION_SCHEMA_REGISTRY
 
 LAYER_EXPRESSION = "layer_expression"
 SCALAR_EXPRESSION = "scalar_expression"
 DIRECTIVE_ARGUMENT = "directive_argument"
 PROPERTY_EXPRESSION = "property_expression"
 RULE_BODY_OPERATION = "rule_body_operation"
+LITERAL_STRING = "literal_string"
 
 _SCALAR_CONTEXTS = frozenset({SCALAR_EXPRESSION, DIRECTIVE_ARGUMENT})
 _LAYER_CONTEXTS = frozenset({LAYER_EXPRESSION, PROPERTY_EXPRESSION, RULE_BODY_OPERATION})
@@ -31,6 +34,8 @@ class ExpressionContextAnnotations:
 
     def semantic_context_for(self, node, fallback="generic"):
         tags = self.get(node)
+        if LITERAL_STRING in tags:
+            return "literal"
         if not tags:
             return fallback
         if fallback != "generic":
@@ -81,6 +86,23 @@ def _push_statement_contexts(pending, annotations, node, context):
     if isinstance(node, ast.VariableDef):
         pending.append(("value", node.values, SCALAR_EXPRESSION))
         return
+    if isinstance(node, ast.DfmSpec):
+        pending.append(("value", node.arguments, LITERAL_STRING))
+        for clause in reversed(node.body):
+            pending.append(("statement", clause, context))
+        return
+    if isinstance(node, ast.DfmClause):
+        scalar_heads = {"STEP", "DISPLACE", "OFFSET", "SETBACK", "WINDOW", "GWINDOW", "ALLOW", "ALLOWX", "ALLOWY"}
+        head = node.keywords[0] if node.keywords else ""
+        argument_context = SCALAR_EXPRESSION if head in scalar_heads else LITERAL_STRING
+        for index, argument in reversed(list(enumerate(node.arguments))):
+            tag = argument_context
+            if tuple(node.keywords[:3]) == ("INSIDE", "OF", "LAYER"):
+                tag = LAYER_EXPRESSION
+            elif head in {"SPACE", "SPACEX", "SPACEY", "SPACEXY"} and index == len(node.arguments) - 1:
+                tag = LAYER_EXPRESSION
+            pending.append(("value", argument, tag))
+        return
     if isinstance(node, ast.Directive):
         pending.append(("value", node.arguments, DIRECTIVE_ARGUMENT))
         if node.property_block is not None:
@@ -125,6 +147,14 @@ def _push_statement_contexts(pending, annotations, node, context):
 
 
 def _push_value_contexts(pending, annotations, value, context):
+    if isinstance(value, (NamedModifier, RawModifier)):
+        modifier_context = value.context(context)
+        if modifier_context == "scalar":
+            modifier_context = SCALAR_EXPRESSION
+        elif modifier_context == "literal":
+            modifier_context = LITERAL_STRING
+        pending.append(("value", value.value, modifier_context))
+        return
     if isinstance(value, ast.Expression):
         annotations.add(value, context)
     if isinstance(value, ast.LayerRef):
@@ -137,7 +167,7 @@ def _push_value_contexts(pending, annotations, value, context):
         annotations.add(value, context)
         return
     if isinstance(value, ast.BinaryOp):
-        child_context = SCALAR_EXPRESSION if value.op in {"+", "-", "*", "/", "%", "?:", ":"} else context
+        child_context = SCALAR_EXPRESSION if value.op in {"+", "-", "*", "/", "^", "%", "?:", ":"} else context
         pending.append(("value", value.right, child_context))
         pending.append(("value", value.left, child_context))
         return
@@ -149,19 +179,25 @@ def _push_value_contexts(pending, annotations, value, context):
         pending.append(("value", value.value, SCALAR_EXPRESSION))
         return
     if isinstance(value, ast.ConstrainedExpr):
-        for modifier in reversed(value.modifiers):
+        for modifier in reversed(value.modifier_nodes):
             pending.append(("value", modifier, context))
         for constraint in reversed(value.constraints):
             pending.append(("value", constraint, SCALAR_EXPRESSION))
         pending.append(("value", value.expr, context))
         return
     if isinstance(value, ast.DRCOp):
-        for modifier in reversed(value.modifiers):
+        for modifier in reversed(value.modifier_nodes):
             pending.append(("value", modifier, context))
         for constraint in reversed(value.constraints):
             pending.append(("value", constraint, SCALAR_EXPRESSION))
-        for operand in reversed(value.operands):
-            pending.append(("value", operand, context))
+        for index, operand in reversed(list(enumerate(value.operands))):
+            operand_context = context
+            role = OPERATION_SCHEMA_REGISTRY.operand_role(value.op, index, len(value.operands))
+            if role == "literal":
+                operand_context = LITERAL_STRING
+            elif role == "scalar":
+                operand_context = SCALAR_EXPRESSION
+            pending.append(("value", operand, operand_context))
         return
     if isinstance(value, ast.FuncCall):
         for arg in reversed(value.args):
@@ -179,8 +215,7 @@ def _push_value_contexts(pending, annotations, value, context):
         return
     if isinstance(value, tuple):
         if len(value) == 2 and isinstance(value[0], str):
-            tuple_context = SCALAR_EXPRESSION if str(value[0]).upper() in {"BY", "LENGTH", "WIDTH"} else context
-            pending.append(("value", value[1], tuple_context))
+            pending.append(("value", as_modifier(value), context))
             return
         for item in reversed(value):
             pending.append(("value", item, context))

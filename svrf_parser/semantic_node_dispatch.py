@@ -50,15 +50,14 @@ def validate_semantic_node(validator, node, scope, pending):
                 "Missing preprocessor symbol name",
                 node,
             )
-        then_scope = scope.child()
-        else_scope = scope.child()
-        for name in _collect_statement_placeholders(node.then_body):
+        then_scope = scope.child((id(node), True))
+        else_scope = scope.child((id(node), False))
+        for name in _collect_statement_placeholders(node.then_body, include_conditionals=False):
             then_scope.define_placeholder(name)
-        for name in _collect_statement_placeholders(node.else_body):
+        for name in _collect_statement_placeholders(node.else_body, include_conditionals=False):
             else_scope.define_placeholder(name)
-        pending.append(("merge_scope", (scope, else_scope)))
+        pending.append(("merge_branches", (scope, (then_scope, else_scope))))
         validator._push_statement_tasks(pending, node.else_body, else_scope)
-        pending.append(("merge_scope", (scope, then_scope)))
         validator._push_statement_tasks(pending, node.then_body, then_scope)
         return
 
@@ -70,6 +69,20 @@ def validate_semantic_node(validator, node, scope, pending):
     if isinstance(node, ast.EncryptedBlock):
         if node.body:
             validator._push_statement_tasks(pending, node.body, scope)
+        return
+
+    if isinstance(node, ast.DfmSpec):
+        scope.define_placeholder(node.name)
+        validator._validate_value(node.arguments, scope)
+        validator._push_statement_tasks(pending, node.body, scope)
+        return
+
+    if isinstance(node, ast.PercLoad):
+        validator._push_statement_tasks(pending, node.body, scope)
+        return
+
+    if isinstance(node, ast.DfmClause):
+        validator._validate_value(node.arguments, scope)
         return
 
     if isinstance(node, ast.Directive):
@@ -122,7 +135,9 @@ def validate_semantic_node(validator, node, scope, pending):
         return
 
     if isinstance(node, ast.VariableDef):
-        validator._validate_value(node.values, scope)
+        for value in node.values:
+            if not isinstance(value, ast.StringLiteral):
+                validator._validate_value(value, scope)
         scope.define_variable(node.name)
         return
 
@@ -144,9 +159,15 @@ def validate_semantic_node(validator, node, scope, pending):
                 f"Rule check {node.name} has an empty body",
                 node,
             )
+        elif not _rule_may_produce_output(node.body):
+            validator.error(
+                "semantic.rule.missing_output",
+                f"Rule check {node.name} has no standalone result-producing layer operation",
+                node,
+            )
         scope.define_rule(node.name)
         rule_scope = scope.child()
-        for name in _collect_statement_placeholders(node.body):
+        for name in _collect_statement_placeholders(node.body, include_conditionals=False):
             rule_scope.define_placeholder(name)
         validator._validate_value(node.comments, rule_scope)
         validator._push_statement_tasks(pending, node.body, rule_scope)
@@ -159,6 +180,32 @@ def validate_semantic_node(validator, node, scope, pending):
                 "CONNECT/SCONNECT requires at least one layer",
                 node,
             )
+        if node.soft:
+            if len(node.layers) < 2:
+                validator.error(
+                    "semantic.connect.too_few_layers",
+                    "SCONNECT requires an upper layer and at least one lower layer",
+                    node,
+                )
+            if node.via_layer:
+                if len(node.layers) > 33:
+                    validator.error(
+                        "semantic.connect.too_many_lower_layers",
+                        "SCONNECT BY permits at most 32 lower layers",
+                        node,
+                    )
+                if node.abut_also:
+                    validator.error(
+                        "semantic.connect.invalid_abut",
+                        "SCONNECT ABUT ALSO cannot be combined with BY",
+                        node,
+                    )
+            elif len(node.layers) > 2:
+                validator.error(
+                    "semantic.connect.invalid_layer_count",
+                    "SCONNECT without BY requires exactly one upper and one lower layer",
+                    node,
+                )
         for layer_name in node.layers:
             validator._warn_unknown_layer(
                 "semantic.connect.unknown_layer",
@@ -256,38 +303,31 @@ def validate_semantic_node(validator, node, scope, pending):
                 "DEVICE statement has no parsed pins",
                 node,
             )
-        if node.cmacro and not scope.knows_macro(node.cmacro):
-            validator.error(
-                "semantic.device.undefined_cmacro",
-                f"DEVICE references undefined CMACRO {node.cmacro}",
-                node,
-            )
+        if node.cmacro:
+            validator._validate_macro_reference(node.cmacro, node, scope, device=True)
         return
 
     if isinstance(node, ast.DMacro):
         scope.define_macro(node.name)
         body_scope = scope.child()
+        # Macro bodies are expanded at invocation, not at their declaration.
+        body_scope.defer_variable_order = True
         for param in node.params:
             body_scope.define_placeholder(param)
-        for name in _collect_statement_placeholders(node.body):
+        for name in _collect_statement_placeholders(node.body, include_conditionals=False):
             body_scope.define_placeholder(name)
         validator._push_statement_tasks(pending, node.body, body_scope)
         return
 
     if isinstance(node, ast.MacroCall):
-        if not scope.knows_macro(node.name):
-            validator.error(
-                "semantic.macro.undefined",
-                f"Macro call references undefined {node.kind} {node.name}",
-                node,
-            )
+        validator._validate_macro_reference(node.name, node, scope)
         return
 
     if isinstance(node, ast.PropertyBlock):
         property_scope = scope.child()
         for name in node.properties:
             property_scope.define_placeholder(name)
-        for name in _collect_statement_placeholders(node.body):
+        for name in _collect_statement_placeholders(node.body, include_conditionals=False):
             property_scope.define_placeholder(name)
         for name in _PROPERTY_BLOCK_IMPLICIT_TERMINALS:
             property_scope.define_placeholder(name)
@@ -362,7 +402,7 @@ def validate_semantic_node(validator, node, scope, pending):
                 op_scope.define_placeholder(name)
         validator._validate_value(node.operands, op_scope)
         validator._validate_value(node.constraints, op_scope)
-        validator._validate_value(node.modifiers, op_scope)
+        validator._validate_value(list(node.modifier_nodes), op_scope)
         return
 
     if isinstance(node, ast.LayerRef):
@@ -375,7 +415,9 @@ def validate_semantic_node(validator, node, scope, pending):
         return
 
     if isinstance(node, ast.VarRef):
-        if not scope.knows_variable(_normalized_scope_name(node.name)):
+        if not scope.knows_variable(node.name) and not validator._warn_conditional_symbol(
+            ("variables",), node.name, node, scope, context="scalar",
+        ):
             validator.warning(
                 "semantic.varref.undefined",
                 f"Description variable reference ^{node.name} has no matching VARIABLE",
@@ -386,3 +428,24 @@ def validate_semantic_node(validator, node, scope, pending):
 
     for _, value in node.iter_fields(include_position=False):
         validator._validate_value(value, scope)
+
+
+def _rule_may_produce_output(statements):
+    pending = list(statements)
+    while pending:
+        statement = pending.pop()
+        if isinstance(statement, (ast.Expression, ast.MacroCall)):
+            return True
+        if isinstance(statement, ast.IfDef):
+            pending.extend(statement.then_body)
+            pending.extend(statement.else_body)
+        elif isinstance(statement, ast.IfExpr):
+            pending.extend(statement.then_body)
+            pending.extend(statement.else_body)
+            for _, body in statement.elseifs:
+                pending.extend(body)
+        elif isinstance(statement, ast.EncryptedBlock):
+            if statement.parse_status == "opaque":
+                return True
+            pending.extend(statement.body)
+    return False

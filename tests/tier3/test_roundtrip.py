@@ -147,6 +147,43 @@ class TestMiscRoundtrip(RoundtripTestCase):
     def test_variable(self):
         self.assertRoundtrip("VARIABLE WIDTH 0.1")
 
+    def test_variable_string_list(self):
+        self.assertRoundtrip('VARIABLE NETS "a" "b"')
+
+    def test_variable_environment(self):
+        self.assertRoundtrip("VARIABLE WIDTH ENVIRONMENT")
+
+    def test_numeric_grouping(self):
+        for expression in ("(2 + 3) * 4", "2 - (3 - 4)", "2 ^ (3 * 4)", "-(2 + 3)", "2 ? 3 : 4 ? 5 : 6"):
+            with self.subTest(expression=expression):
+                self.assertRoundtrip(f"VARIABLE X {expression}")
+
+    def test_string_escapes(self):
+        self.assertRoundtrip(r'VARIABLE NETS "a\\b" "a\"b" "a\nb"')
+
+    def test_quoted_names(self):
+        self.assertRoundtrip('LAYER "m1" 1\n"rule with spaces" { COPY "m1" }')
+
+    def test_connect_options(self):
+        self.assertRoundtrip('SCONNECT M1 M2 LINK "vdd" ABUT ALSO')
+        self.assertRoundtrip('SCONNECT M1 M2 BY VIA LINK "vdd"')
+
+    def test_decrypt_directive(self):
+        self.assertRoundtrip('#DECRYPT abc123\n#ENDCRYPT')
+        self.assertEqual("#DECRYPT", parse('#DECRYPT abc123\n#ENDCRYPT').statements[0].directive)
+
+    def test_fmacro_syntax(self):
+        self.assertRoundtrip('FMACRO EXTRACT(M1, 0.1)')
+        self.assertEqual('FMACRO EXTRACT(M1, 0.1)', printer.emit(parse('FMACRO EXTRACT(M1, 0.1)')))
+
+    def test_embedded_include(self):
+        self.assertRoundtrip('VARIABLE CELLS\nINCLUDE "cells.list"')
+        self.assertRoundtrip('DRC RESULTS DATABASE\nINCLUDE "results.config"')
+
+    def test_flatten_cell_names_keep_case(self):
+        self.assertRoundtrip('FLATTEN CELL "cellName"')
+        self.assertRoundtrip('FLATTEN INSIDE CELL "cellName"')
+
 
 class TestRuleCheckRoundtrip(RoundtripTestCase):
     def test_basic_block(self):

@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 from . import ast
-from .exceptions import ParseError
 from .keywords import _DRC_MODIFIERS
+from .modifiers import NamedModifier
+from .operation_schema import OPERATION_SCHEMA_REGISTRY
 from .svrf_spec import PARSER_SPEC
 from .tokens import TokenType
 
@@ -12,8 +13,6 @@ TT = TokenType
 
 _COMPARISON_SYMBOLS = PARSER_SPEC.table("comparison_symbols")
 _MODIFIER_STARTERS = PARSER_SPEC.table("modifier_starters")
-_DFM_PROPERTY_MODIFIERS = PARSER_SPEC.table("dfm_property_modifiers")
-_RET_OPTION_STARTERS = PARSER_SPEC.table("ret_option_starters") | frozenset({"EMULATION"})
 
 
 class OperationModifierParserMixin:
@@ -46,7 +45,7 @@ class OperationModifierParserMixin:
         constraints = []
         while self._cur().type == TT.SYMBOL and self._cur().value in _COMPARISON_SYMBOLS:
             op = self._advance()
-            value = self._parse_expression(35)
+            value = self._parse_expression(35, context="scalar")
             constraints.append(ast.Constraint(op=op.value, value=value, **self._loc(op)))
         return constraints
 
@@ -57,12 +56,7 @@ class OperationModifierParserMixin:
         return modifiers
 
     def _modifier_starters_for_operation(self, schema):
-        modifier_starters = _MODIFIER_STARTERS
-        if schema.modifier_family == "dfm_property":
-            modifier_starters = modifier_starters | _DFM_PROPERTY_MODIFIERS
-        elif schema.modifier_family == "ret":
-            modifier_starters = modifier_starters | _RET_OPTION_STARTERS
-        return modifier_starters
+        return OPERATION_SCHEMA_REGISTRY.modifier_starters_for(schema)
 
     def _parse_operation_modifiers(
         self,
@@ -94,7 +88,10 @@ class OperationModifierParserMixin:
             if (
                 modifiers
                 and self._starts_same_line_statement_at(self.pos, "rule")
-                and not (token.type == TT.IDENT and token.value in modifier_starters)
+                and (
+                    self._segmenter.starts_operation_at(self.pos)
+                    or not (token.type == TT.IDENT and token.value in modifier_starters)
+                )
             ):
                 break
             if token.type == TT.SYMBOL and token.value in {"}", "]", ")", ","}:
@@ -103,7 +100,7 @@ class OperationModifierParserMixin:
                 modifiers.extend(self._parse_constraints())
                 continue
             if token.type == TT.SYMBOL and token.value == "[" and bracket_modifier_mode == "expression":
-                modifiers.append(self._parse_expression(stop_on_newline=False))
+                modifiers.append(self._parse_expression(stop_on_newline=False, context="dfm"))
                 continue
             if token.type == TT.SYMBOL and token.value == "[":
                 modifiers.append(self._parse_scalar_argument())
@@ -119,7 +116,7 @@ class OperationModifierParserMixin:
                     modifiers.append("BY")
                     modifiers.extend(self._parse_constraints())
                 else:
-                    modifiers.append(("BY", self._parse_modifier_value()))
+                    modifiers.append(NamedModifier("BY", self._parse_modifier_value()))
                 continue
             if token.type == TT.IDENT and token.value == "ABUT" and self._peek().type == TT.IDENT and self._peek().value == "ALSO":
                 self._advance()
@@ -167,40 +164,4 @@ class OperationModifierParserMixin:
         return None
 
     def _parse_modifier_value(self):
-        left = self._parse_modifier_atom()
-        while self._cur().type == TT.SYMBOL and self._cur().value in {"+", "-", "*", "/", "^"}:
-            op = self._advance().value
-            right = self._parse_modifier_atom()
-            left = ast.BinaryOp(op=op, left=left, right=right, **self._loc())
-        return left
-
-    def _parse_modifier_atom(self):
-        token = self._cur()
-        loc = self._loc(token)
-        if token.type == TT.NUMBER:
-            self._advance()
-            return ast.NumberLiteral(value=token.value, **loc)
-        if token.type == TT.STRING:
-            self._advance()
-            return ast.StringLiteral(value=token.value, **loc)
-        if token.type == TT.IDENT:
-            self._advance()
-            return ast.LayerRef(name=token.value, **loc)
-        if token.type == TT.SYMBOL and token.value == "(":
-            self._advance()
-            expr = self._parse_modifier_value()
-            self._expect(TT.SYMBOL, ")")
-            return expr
-        if token.type == TT.SYMBOL and token.value == "-":
-            self._advance()
-            if self._cur().type == TT.NUMBER:
-                value_token = self._advance()
-                return ast.NumberLiteral(value=-value_token.value, **loc)
-            operand = self._parse_modifier_atom()
-            return ast.UnaryOp(op="-", operand=operand, **loc)
-        raise ParseError(
-            f"Unexpected token {token.raw!r} in modifier value",
-            token.line,
-            token.col,
-            token,
-        )
+        return self._parse_expression(35, context="modifier")

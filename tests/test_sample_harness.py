@@ -15,23 +15,29 @@ from test_samples import _parse_cli_args, find_sample_files, run_tests
 
 class SampleHarnessTests(unittest.TestCase):
     def test_parse_cli_args_accepts_sample_root_only(self):
-        self.assertEqual(("samples", None, False), _parse_cli_args(["samples"]))
+        self.assertEqual(("samples", None, False, False), _parse_cli_args(["samples"]))
 
     def test_parse_cli_args_accepts_strict_warning_gate(self):
         self.assertEqual(
-            ("samples", None, True),
+            ("samples", None, True, False),
             _parse_cli_args(["samples", "--fail-on-warnings"]),
         )
 
     def test_parse_cli_args_preserves_single_file_argument(self):
         self.assertEqual(
-            ("samples", "one.drc", True),
+            ("samples", "one.drc", True, False),
             _parse_cli_args(["samples", "one.drc", "--fail-on-warnings"]),
         )
 
     def test_parse_cli_args_rejects_unknown_options(self):
         with self.assertRaises(SystemExit):
             _parse_cli_args(["samples", "--unknown"])
+
+    def test_parse_cli_args_accepts_explicit_private_details(self):
+        self.assertEqual(
+            ("samples", None, False, True),
+            _parse_cli_args(["samples", "--show-private-details"]),
+        )
 
     def test_find_sample_files_accepts_direct_file_without_extension_filter(self):
         root = Path(__file__).resolve().parent / f"tmp_sample_harness_{os.getpid()}"

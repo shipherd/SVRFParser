@@ -77,6 +77,7 @@ class Parser(ParserCursorMixin, StatementParserMixin, OperationParserMixin, Expr
         self.length = len(tokens)
         self.warnings = []
         self._current_statement_cst = None
+        self._expression_context = "scalar"
         self._segmenter = StatementSegmenter(
             tokens,
             SegmenterConfig(
@@ -122,6 +123,7 @@ class Parser(ParserCursorMixin, StatementParserMixin, OperationParserMixin, Expr
                     | _EDGE_BINARY_PREFIX_OPS
                     | {"WITH", "NOT"}
                 ),
+                measurement_ops=_MEASUREMENT_OPS,
             ),
         )
 
@@ -185,6 +187,7 @@ class Parser(ParserCursorMixin, StatementParserMixin, OperationParserMixin, Expr
         stop_preprocessors = stop_preprocessors or set()
         pending_property_headers = []
         pending_property_body_start = None
+        pending_dfm_spec = False
 
         while True:
             next_idx = self._segmenter.next_non_newline_index(self.pos)
@@ -210,6 +213,10 @@ class Parser(ParserCursorMixin, StatementParserMixin, OperationParserMixin, Expr
                 break
             if token.type == TT.SYMBOL and token.value in stop_symbols:
                 break
+            if mode in {"dfm_fill", "dfm_mat"} and not self._starts_dfm_fill_item(self.pos, mode):
+                break
+            if mode == "perc_load" and not self._starts_perc_load_item(self.pos):
+                break
 
             statement_cst = self._segmenter.next_statement_cst(
                 self.pos,
@@ -224,7 +231,15 @@ class Parser(ParserCursorMixin, StatementParserMixin, OperationParserMixin, Expr
             prev_statement_cst = self._current_statement_cst
             self._current_statement_cst = statement_cst
             try:
-                stmt = self._parse_statement(mode)
+                if mode not in {"dfm_fill", "dfm_mat"} and pending_dfm_spec and self._starts_dfm_fill_item(self.pos):
+                    if token.type == TT.PREPROCESSOR:
+                        stmt = self._parse_preprocessor("dfm_fill")
+                    elif token.type == TT.RULE_COMMENT:
+                        stmt = self._parse_rule_comment_statement()
+                    else:
+                        stmt = self._parse_dfm_fill_clause()
+                else:
+                    stmt = self._parse_statement(mode)
             except ParseError as exc:
                 if self.strict:
                     raise
@@ -250,6 +265,7 @@ class Parser(ParserCursorMixin, StatementParserMixin, OperationParserMixin, Expr
                 self._current_statement_cst = prev_statement_cst
             if stmt is not None:
                 statements.append(self._finish_node(stmt, start))
+                pending_dfm_spec = self._dfm_spec_continuation_after(stmt, pending_dfm_spec)
                 if mode in {"macro", "property"}:
                     if self._is_deferred_property_header(statements[-1]):
                         pending_property_headers.append(len(statements) - 1)
@@ -427,28 +443,6 @@ class Parser(ParserCursorMixin, StatementParserMixin, OperationParserMixin, Expr
             self._advance()
             return ast.LayerRef(name=token.value, **loc)
         return self._parse_expression(50)
-
-    def _parse_cell_operands(self, stop_tokens=None, stop_on_newline=True):
-        operands = []
-        stop_tokens = stop_tokens or set()
-        while True:
-            token = self._cur()
-            if token.type in (TT.EOF, TT.PREPROCESSOR, TT.RULE_COMMENT):
-                break
-            if token.type == TT.NEWLINE and stop_on_newline:
-                break
-            if token.type == TT.SYMBOL and token.value in stop_tokens:
-                break
-            if token.type == TT.SYMBOL and token.value in {"}", "]", ")"} and token.value not in stop_tokens:
-                break
-            if token.type == TT.STRING:
-                string_token = self._advance()
-                operands.append(ast.StringLiteral(value=string_token.value, **self._loc(string_token)))
-                continue
-            if not self._can_start_expression_token():
-                break
-            operands.append(self._parse_expression(35, stop_tokens=stop_tokens, stop_on_newline=stop_on_newline))
-        return operands
 
     def _parse_layer(self):
         return self._parse_statement_shape("layer")
@@ -630,6 +624,8 @@ class Parser(ParserCursorMixin, StatementParserMixin, OperationParserMixin, Expr
         schema = PREPROCESSOR_SCHEMA_REGISTRY.match(token.value)
         if schema is None:
             return self._parse_preprocessor_directive()
+        if schema.parser_method == "_parse_ifdef_from_preprocessor":
+            return self._parse_ifdef_from_preprocessor(mode)
         return getattr(self, schema.parser_method)()
 
     def _consume_noop_preprocessor(self):
@@ -879,6 +875,7 @@ class Parser(ParserCursorMixin, StatementParserMixin, OperationParserMixin, Expr
             content=content,
             body=body,
             parse_status=parse_status,
+            directive=start.value,
             **self._loc(start),
         )
 
@@ -923,9 +920,8 @@ class Parser(ParserCursorMixin, StatementParserMixin, OperationParserMixin, Expr
                         node.end_col += first_line_col_delta
                     node.line += line_delta
                     node.end_line += line_delta
-                if node.start_offset:
+                if node.line:
                     node.start_offset += offset_delta
-                if node.end_offset:
                     node.end_offset += offset_delta
 
     def _parse_property_block(self):
@@ -1020,8 +1016,8 @@ class Parser(ParserCursorMixin, StatementParserMixin, OperationParserMixin, Expr
         body = self._parse_if_expr_block(mode, "Expected '{' to start ELSE IF body")
         return condition, body
 
-    def _parse_name(self, allow_missing=False):
-        name = self._parse_name_part(allow_missing=allow_missing)
+    def _parse_name(self, allow_missing=False, *, preserve_case=False):
+        name = self._parse_name_part(allow_missing=allow_missing, preserve_case=preserve_case)
         if name is None:
             return None
 
@@ -1035,16 +1031,16 @@ class Parser(ParserCursorMixin, StatementParserMixin, OperationParserMixin, Expr
                 self.pos = save
                 break
             self._skip_newlines()
-            part = self._parse_name_part()
+            part = self._parse_name_part(preserve_case=preserve_case)
             name = f"{name}{separator}{part}"
         return name
 
-    def _parse_name_part(self, allow_missing=False):
+    def _parse_name_part(self, allow_missing=False, *, preserve_case=False):
         token = self._cur()
         if token.type == TT.IDENT:
             token = self._advance()
             raw = token.raw if token.raw is not None else token.value
-            return str(raw).upper()
+            return str(raw) if preserve_case else str(raw).upper()
         if token.type == TT.STRING:
             return self._advance().value
         if token.type == TT.NUMBER:

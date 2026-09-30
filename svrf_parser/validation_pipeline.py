@@ -8,10 +8,11 @@ from .diagnostics import SEVERITY_ERROR
 from .diagnostic_postprocess import (
     apply_unresolved_symbol_policy,
     reclassify_unresolved_reference_diagnostics,
+    summarize_conditional_references,
     warn_encrypted_blocks_may_define_symbols,
     warn_limited_support_features,
 )
-from .include_resolver import flatten_with_includes, parse_document
+from .include_resolver import expand_includes, parse_document
 from .semantic_passes import (
     build_validation_profile,
     run_semantic_validation_pass,
@@ -27,11 +28,11 @@ from .unresolved_policy import (
 )
 from .validation_common import (
     ValidationResult,
+    ParsedDocument,
     is_pathlike_filename,
     make_diagnostic,
     read_error_result,
     route_diagnostic,
-    with_include_stack,
 )
 
 
@@ -45,6 +46,7 @@ def validate_svrf(
     follow_includes=True,
     unresolved_policy="strict",
     symbol_manifest=None,
+    run_directory=None,
 ):
     """Validate whether *text* is a valid SVRF file."""
 
@@ -65,31 +67,36 @@ def validate_svrf(
             policy_summary=unresolved_policy_summary("strict"),
         )
 
-    root_doc, parse_errors = parse_document(text, filename=filename, strict=strict)
+    expansion = expand_includes(
+        text or "", filename, run_directory=run_directory,
+        follow_includes=follow_includes and (is_pathlike_filename(filename) or run_directory is not None),
+    )
+    source_map = expansion.source_map
+    root_doc, parse_errors = parse_document(source_map.text, filename=filename, strict=strict)
     if root_doc is None:
         return ValidationResult(
             False,
-            parse_errors,
+            [*expansion.diagnostics, *(source_map.diagnostic(diag) for diag in parse_errors)],
             policy_summary=unresolved_policy_summary(
                 unresolved_policy,
                 manifest_source=getattr(symbol_manifest, "source", None),
             ),
         )
 
-    flattened, documents, include_stacks, errors, warnings = flatten_with_includes(
-        root_doc,
-        strict=strict,
-        follow_includes=follow_includes and is_pathlike_filename(filename),
-    )
+    warnings = [source_map.diagnostic(diag) for diag in root_doc.warnings]
+    errors = list(expansion.diagnostics)
+    source_map.remap_program(root_doc.program, expansion.sources[filename])
+    documents = [ParsedDocument(source.filename, source.text, root_doc.program, [])
+                 for source in expansion.sources.values()]
 
     symbol_pass = run_symbol_table_pass(
-        flattened,
+        root_doc.program.statements,
         filename=filename,
         strict=strict,
     )
     for diag in symbol_pass.diagnostics:
         route_diagnostic(
-            with_include_stack(diag, include_stacks.get(diag.filename, ())),
+            diag,
             errors,
             warnings,
         )
@@ -105,16 +112,14 @@ def validate_svrf(
         unresolved_policy,
         manifest_source=getattr(symbol_manifest, "source", None),
     )
+    semantic_pass = run_semantic_validation_pass(
+        root_doc.program, filename=filename, strict=strict,
+        symbol_table=symbol_pass.symbol_table,
+    )
     for doc in documents:
-        semantic_pass = run_semantic_validation_pass(
-            doc.program,
-            filename=doc.filename,
-            strict=strict,
-            symbol_table=symbol_pass.symbol_table,
-        )
         semantic_diags = reclassify_unresolved_reference_diagnostics(
             doc,
-            list(semantic_pass.diagnostics),
+            [diag for diag in semantic_pass.diagnostics if diag.filename == doc.filename],
             known_doc_paths,
             file_cache=companion_file_cache,
             pattern_cache=companion_pattern_cache,
@@ -127,12 +132,11 @@ def validate_svrf(
             policy_summary=policy_summary,
             is_manifest_suppressible_code=is_manifest_suppressible_code,
         )
+        if not strict and unresolved_policy == "practical":
+            semantic_diags = summarize_conditional_references(semantic_diags)
         for diagnostic in semantic_diags:
             route_diagnostic(
-                with_include_stack(
-                    diagnostic,
-                    include_stacks.get(doc.filename, ()),
-                ),
+                diagnostic,
                 errors,
                 warnings,
             )
@@ -140,16 +144,11 @@ def validate_svrf(
             doc,
             semantic_diags,
             warnings,
-            include_stack=include_stacks.get(doc.filename, ()),
         )
-        warn_limited_support_features(
-            doc,
-            warnings,
-            include_stack=include_stacks.get(doc.filename, ()),
-        )
+    warn_limited_support_features(root_doc, warnings)
 
     program = root_doc.program
-    profile = build_validation_profile(documents)
+    profile = build_validation_profile([root_doc])
     if not program.statements:
         errors.append(
             make_diagnostic(
@@ -213,6 +212,7 @@ def is_valid_svrf(
     follow_includes=True,
     unresolved_policy="strict",
     symbol_manifest=None,
+    run_directory=None,
 ):
     """Return ``True`` if *text* is a valid SVRF file, ``False`` otherwise."""
 
@@ -223,6 +223,7 @@ def is_valid_svrf(
         follow_includes=follow_includes,
         unresolved_policy=unresolved_policy,
         symbol_manifest=symbol_manifest,
+        run_directory=run_directory,
     ).valid
 
 
@@ -232,6 +233,7 @@ def is_valid_svrf_file(
     follow_includes=True,
     unresolved_policy="strict",
     symbol_manifest=None,
+    run_directory=None,
 ):
     """Return ``True`` if the file at *path* is a valid SVRF file."""
 
@@ -246,6 +248,7 @@ def is_valid_svrf_file(
         follow_includes=follow_includes,
         unresolved_policy=unresolved_policy,
         symbol_manifest=symbol_manifest,
+        run_directory=run_directory,
     )
 
 
@@ -255,6 +258,7 @@ def validate_svrf_file(
     follow_includes=True,
     unresolved_policy="strict",
     symbol_manifest=None,
+    run_directory=None,
 ):
     """Validate the file at *path* and return a ``ValidationResult``."""
 
@@ -290,4 +294,5 @@ def validate_svrf_file(
         follow_includes=follow_includes,
         unresolved_policy=normalized_policy,
         symbol_manifest=symbol_manifest,
+        run_directory=run_directory,
     )

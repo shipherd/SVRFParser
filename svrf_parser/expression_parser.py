@@ -34,7 +34,16 @@ class ExpressionParserMixin:
     expression dispatch from statement-family parsing.
     """
 
-    def _parse_expression(self, rbp=0, stop_tokens=None, stop_on_newline=True):
+    def _parse_expression(self, rbp=0, stop_tokens=None, stop_on_newline=True, *, context=None):
+        previous_context = self._expression_context
+        if context is not None:
+            self._expression_context = context
+        try:
+            return self._parse_pratt_expression(rbp, stop_tokens, stop_on_newline)
+        finally:
+            self._expression_context = previous_context
+
+    def _parse_pratt_expression(self, rbp, stop_tokens, stop_on_newline):
         start = self.pos
         stop_tokens = stop_tokens or set()
         if not stop_on_newline:
@@ -59,6 +68,11 @@ class ExpressionParserMixin:
                 break
             lbp = self._led_binding_power()
             if lbp <= rbp:
+                if rbp < 30 and self._expression_context not in {"modifier", "dfm"}:
+                    reordered = self._parse_reordered_boolean(left, stop_tokens, stop_on_newline)
+                    if reordered is not None:
+                        left = reordered
+                        continue
                 break
             left = self._led(left, lbp, stop_tokens, stop_on_newline)
         return self._finish_node(left, start)
@@ -169,10 +183,17 @@ class ExpressionParserMixin:
 
     def _collect_prefix_expression_tags(self, token):
         tags = {"layer_ref"}
+        if self._peek().type == TT.SYMBOL and self._peek().value in {":", "::"}:
+            callable_name, spaced = self._peek_callable_name_before_paren()
+            if callable_name is not None and (not spaced or callable_name in _FUNCTION_LIKE_NAMES):
+                tags.add("callable_name")
+            return frozenset(tags)
         if self._segmenter.starts_assignment_at(self.pos):
             tags.add("assignment_reference")
         if token.value in _MEASUREMENT_OPS:
             tags.add("measurement")
+        if self._is_text_selection_head():
+            tags.add("text_selection")
         if token.value in {"INSIDE", "OUTSIDE", "OUT"} and self._peek().type == TT.IDENT and self._peek().value == "CELL":
             tags.add("inside_outside_cell")
         if self._current_edge_binary_op_parts() is not None:
@@ -208,6 +229,11 @@ class ExpressionParserMixin:
         return PREFIX_EXPRESSION_SCHEMA_REGISTRY.match(self._collect_prefix_expression_tags(token))
 
     def _parse_ident_nud(self, token, loc, stop_tokens, stop_on_newline):
+        if self._expression_context == "modifier":
+            name, _ = self._peek_callable_name_before_paren()
+            if name is not None:
+                return self._parse_function_call()
+            return self._parse_ident_layer_ref(token, loc, stop_tokens, stop_on_newline)
         schema = self._resolve_prefix_expression_schema(token)
         handler = getattr(self, schema.parser_method)
         return handler(token, loc, stop_tokens, stop_on_newline)
@@ -224,8 +250,7 @@ class ExpressionParserMixin:
         del token
         start = self._advance()
         self._advance()
-        operands = self._parse_cell_operands(stop_tokens=stop_tokens, stop_on_newline=stop_on_newline)
-        return ast.DRCOp(op=f"{start.value} CELL", operands=operands, constraints=[], modifiers=[], **loc)
+        return self._parse_cell_selection(f"{start.value} CELL", None, loc, stop_tokens, stop_on_newline)
 
     def _parse_prefix_edge_binary_nud(self, token, loc, stop_tokens, stop_on_newline):
         del token, loc, stop_tokens, stop_on_newline
@@ -266,6 +291,10 @@ class ExpressionParserMixin:
         if token.type != TT.IDENT:
             return frozenset(tags)
 
+        if self._is_text_selection_head():
+            tags.add("text_selection")
+        if token.value in {"INSIDE", "OUTSIDE", "OUT"} and self._peek().type == TT.IDENT and self._peek().value == "CELL":
+            tags.add("inside_outside_cell")
         if token.value in _MEASUREMENT_OPS:
             tags.add("measurement")
         if token.value == "SIZE":
@@ -299,6 +328,8 @@ class ExpressionParserMixin:
         if schema.binding_power_source == "static":
             return schema.binding_power or 0
         if schema.binding_power_source == "arithmetic_symbol":
+            if token.value == "^" and self._expression_context == "dfm":
+                return 45
             return _ARITHMETIC_BP.get(token.value, 0)
         if schema.binding_power_source == "infix_ident":
             return _INFIX_BP.get(token.value, 0)

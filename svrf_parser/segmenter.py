@@ -10,6 +10,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from .statement_cst import PropertyBlockHeader, RuleCheckHeader, StatementCst, StatementHead
+from .statement_schema import STATEMENT_SCHEMA_REGISTRY
 from .tokens import Token, TokenType
 
 TT = TokenType
@@ -31,6 +32,7 @@ class SegmenterConfig:
     modifier_starters: frozenset[str]
     prefix_boolean_ops: frozenset[str]
     group_continuation_keywords: frozenset[str]
+    measurement_ops: frozenset[str] = frozenset()
 
 
 @dataclass(frozen=True, slots=True)
@@ -113,7 +115,7 @@ class StatementSegmenter:
             return False
         if token.type == TT.SYMBOL:
             return token.value in (
-                {"(", "[", ",", "?", ":", "=", "+", "-", "*", "/", "^"}
+                {"(", "[", ",", "?", ":", "="} | self.config.arithmetic_symbols
                 | self.config.comparison_symbols
             )
         if token.type != TT.IDENT:
@@ -160,15 +162,39 @@ class StatementSegmenter:
         if nxt.type == TT.SYMBOL and nxt.value in self.config.comparison_symbols:
             return True
         if nxt.type == TT.IDENT and nxt.value in self.config.modifier_starters:
-            return True
+            return not self.starts_operation_at(next_idx)
         return False
+
+    def starts_operation_at(self, idx):
+        token = self._token_at(idx)
+        if token.type != TT.IDENT or token.value not in self.config.expression_prefix_words:
+            return False
+        next_idx = self.next_non_newline_index(idx + 1)
+        operand = self._token_at(next_idx)
+        if token.value == "RECTANGLE" and operand.type == TT.IDENT and operand.value == "ENCLOSURE":
+            return True
+        if token.value == "WITH" and operand.type == TT.IDENT and operand.value in {"TEXT", "WIDTH", "EDGE", "NEIGHBOR"}:
+            next_idx = self.next_non_newline_index(next_idx + 1)
+            operand = self._token_at(next_idx)
+        if operand.type == TT.SYMBOL:
+            return operand.value == "("
+        if operand.type == TT.STRING:
+            return True
+        return operand.type == TT.IDENT and (
+            token.value in self.config.measurement_ops
+            or operand.value not in self.config.modifier_starters
+        )
 
     def continues_nonstatement_expression_across_newline(self, newline_idx, mode):
         next_idx = self.next_non_newline_index(newline_idx + 1)
         if next_idx >= self.length:
             return False
         nxt = self.tokens[next_idx]
-        return self.can_start_expression_token(nxt) and not self.starts_statement_at(next_idx, mode)
+        return (
+            self.can_start_expression_token(nxt)
+            and not self.starts_statement_at(next_idx, mode)
+            and not self.starts_operation_at(next_idx)
+        )
 
     def property_header_newline_action(self, newline_idx, stop_preprocessors=None):
         stop_preprocessors = set(stop_preprocessors or ())
@@ -198,7 +224,7 @@ class StatementSegmenter:
             if (
                 prev.type == TT.SYMBOL
                 and (
-                    prev.value in {"?", ":", "=", "+", "-", "*", "/", "^"}
+                    prev.value in ({"?", ":", "="} | self.config.arithmetic_symbols)
                     or prev.value in self.config.comparison_symbols
                 )
                 and self.continues_rhs_across_newline(newline_idx)
@@ -219,6 +245,7 @@ class StatementSegmenter:
             nxt.type == TT.IDENT
             and nxt.value in self.config.modifier_starters
             and not self.starts_line_statement_at(next_idx)
+            and not self.starts_operation_at(next_idx)
         ):
             return True
         return False
@@ -562,6 +589,14 @@ class StatementSegmenter:
         if self.starts_rule_check_at(idx, mode):
             return ("rule_check", token.value if token.type == TT.IDENT else str(token.raw))
         if token.type == TT.IDENT:
+            next_token = self._token_at(idx + 1)
+            if next_token.type == TT.SYMBOL and next_token.value in {":", "::"}:
+                return ("expression", token.value)
+            if token.value == "FLATTEN" and next_token.type == TT.IDENT and next_token.value in {"CELL", "INSIDE"}:
+                return ("directive", token.value)
+            span = STATEMENT_SCHEMA_REGISTRY.head_span(self.tokens, idx, self.next_non_newline_index)
+            if span is not None and len(span[1]) > 1 and STATEMENT_SCHEMA_REGISTRY.match(mode, span[1]) is not None:
+                return ("statement_head", token.value)
             if mode == "top" and token.value in self.config.top_level_line_heads:
                 return ("statement_head", token.value)
             if mode in {"macro", "property"} and token.value == "IF":
@@ -672,6 +707,10 @@ class StatementSegmenter:
             return idx + 1, ("[",)
         if token.type != TT.IDENT:
             return idx + 1, None
+        if head_kind == "statement_head":
+            span = STATEMENT_SCHEMA_REGISTRY.head_span(self.tokens, idx, self.next_non_newline_index)
+            if span is not None:
+                return span
 
         words = [token.value]
         end = idx + 1

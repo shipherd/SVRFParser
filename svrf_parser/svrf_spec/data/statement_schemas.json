@@ -2,6 +2,63 @@
   "entries": [
     {
       "head_prefix": [
+        "DFM",
+        "SPEC",
+        "OPTIMIZE"
+      ],
+      "modes": [
+        "macro",
+        "rule",
+        "top"
+      ],
+      "name": "dfm_spec_optimize",
+      "parse_kinds": [],
+      "parser_method": "_parse_dfm_spec_fill"
+    },
+    {
+      "head_prefix": [
+        "PERC",
+        "LOAD"
+      ],
+      "modes": [
+        "top"
+      ],
+      "name": "perc_load",
+      "parse_kinds": [],
+      "parser_method": "_parse_perc_load"
+    },
+    {
+      "head_prefix": [
+        "DFM",
+        "SPEC",
+        "SPACE"
+      ],
+      "modes": [
+        "macro",
+        "rule",
+        "top"
+      ],
+      "name": "dfm_spec_space",
+      "parse_kinds": [],
+      "parser_method": "_parse_dfm_spec_fill"
+    },
+    {
+      "head_prefix": [
+        "DFM",
+        "SPEC",
+        "FILL"
+      ],
+      "modes": [
+        "macro",
+        "rule",
+        "top"
+      ],
+      "name": "dfm_spec_fill",
+      "parse_kinds": [],
+      "parser_method": "_parse_dfm_spec_fill"
+    },
+    {
+      "head_prefix": [
         "TRACE",
         "PROPERTY"
       ],

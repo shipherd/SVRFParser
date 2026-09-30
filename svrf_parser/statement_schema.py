@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from .svrf_spec import STATEMENT_SCHEMA_SPEC
+from .tokens import TokenType
 
 
 @dataclass(frozen=True, slots=True)
@@ -63,6 +64,24 @@ class StatementSchemaRegistry:
             if schema.matches(mode, head_words=head_words, parse_kind=parse_kind):
                 return schema
         return None
+
+    def head_span(self, tokens, start, next_non_newline_index):
+        """Recognize explicit heads without consuming keyword-shaped operands."""
+        for schema in self.schemas:
+            if not schema.head_prefix or schema.head_prefix[0] != tokens[start].value:
+                continue
+            index = start
+            for offset, word in enumerate(schema.head_prefix):
+                if index >= len(tokens) or tokens[index].type != TokenType.IDENT or tokens[index].value != word:
+                    break
+                index += 1
+                if offset + 1 < len(schema.head_prefix):
+                    index = next_non_newline_index(index)
+            else:
+                if schema.parser_method == "_parse_directive":
+                    return None
+                return index, schema.head_prefix
+        return start + 1, (tokens[start].value,)
 
 
 STATEMENT_SCHEMAS = tuple(

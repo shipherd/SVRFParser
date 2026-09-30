@@ -147,11 +147,15 @@ def match_construct(doc_name, supported_set):
 
 def main():
     if not DOCS_TOC.exists():
-        print(f"toc.json not found: {DOCS_TOC}")
+        print("toc.json not found at the requested location.")
         return 1
 
     # Step 1: Extract from docs
-    doc_constructs = extract_doc_constructs(DOCS_TOC)
+    try:
+        doc_constructs = extract_doc_constructs(DOCS_TOC)
+    except Exception as error:
+        print(f"Cannot read the requested manual inventory: {type(error).__name__}")
+        return 1
     print(f"Documented constructs: {len(doc_constructs)}")
 
     # Normalize supported set for matching
@@ -206,11 +210,15 @@ def main():
         "coverage_pct": round(pct, 1),
         "by_category": by_category,
     }
-    MATRIX_PATH.write_text(
-        json.dumps(matrix, indent=2, ensure_ascii=False),
-        encoding='utf-8'
-    )
-    print(f"\nMatrix written to {MATRIX_PATH}")
+    try:
+        MATRIX_PATH.write_text(
+            json.dumps(matrix, indent=2, ensure_ascii=False),
+            encoding='utf-8'
+        )
+    except Exception as error:
+        print(f"Cannot write coverage matrix: {type(error).__name__}")
+        return 1
+    print("\nMatrix written to coverage_matrix.json")
     return 0
 
 

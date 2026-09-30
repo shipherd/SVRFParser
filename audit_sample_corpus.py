@@ -12,6 +12,7 @@ from pathlib import Path
 from svrf_parser import validate_svrf_file
 from svrf_parser.diagnostic_postprocess import undefined_symbol_name
 from sample_corpus import iter_sample_files
+from report_privacy import ReportPrivacy
 from svrf_parser.unresolved_policy import load_symbol_manifest
 
 
@@ -64,6 +65,8 @@ def classify_diagnostic(diagnostic):
         return "semantic_scalar_symbol"
     if code == "semantic.reference.local_scope_only":
         return "semantic_local_scope_symbol"
+    if code in {"semantic.reference.conditional", "semantic.reference.unavailable_branch"}:
+        return "semantic_conditional_symbol"
     if code.startswith("semantic."):
         return "semantic_rule_issue"
     if code.startswith("validation."):
@@ -103,7 +106,7 @@ def audit_validation_result(path, result):
     )
 
 
-def audit_path(path, *, unresolved_policy="strict", symbol_manifest=None):
+def audit_path(path, *, unresolved_policy="strict", symbol_manifest=None, run_directory=None):
     return audit_validation_result(
         path,
         validate_svrf_file(
@@ -111,17 +114,19 @@ def audit_path(path, *, unresolved_policy="strict", symbol_manifest=None):
             strict=False,
             unresolved_policy=unresolved_policy,
             symbol_manifest=symbol_manifest,
+            run_directory=run_directory,
         ),
     )
 
 
-def audit_corpus(root, *, unresolved_policy="strict", symbol_manifest=None):
+def audit_corpus(root, *, unresolved_policy="strict", symbol_manifest=None, run_directory=None):
     files = list(iter_sample_files(Path(root)))
     return [
         audit_path(
             path,
             unresolved_policy=unresolved_policy,
             symbol_manifest=symbol_manifest,
+            run_directory=run_directory,
         )
         for path in files
     ]
@@ -138,7 +143,8 @@ def has_audit_failures(summaries):
     return any((not summary.valid) or summary.error_count for summary in summaries)
 
 
-def _print_summary(summaries, *, top_symbols=10, include_files=True):
+def _print_summary(summaries, *, top_symbols=10, include_files=True, privacy=None):
+    privacy = privacy or ReportPrivacy()
     total_files = len(summaries)
     valid_files = sum(1 for summary in summaries if summary.valid)
     total_errors = sum(summary.error_count for summary in summaries)
@@ -179,7 +185,7 @@ def _print_summary(summaries, *, top_symbols=10, include_files=True):
     print(f"profile tags: {_format_counter(dict(overall_tags), top=top_symbols)}")
     print(f"limited-support features: {_format_counter(dict(overall_limited), top=top_symbols)}")
     if overall_symbols:
-        print(f"top unresolved symbols: {_format_counter(dict(overall_symbols), top=top_symbols)}")
+        print(f"top unresolved symbols: {_format_counter(privacy.symbol_counts(overall_symbols), top=top_symbols)}")
     else:
         print("top unresolved symbols: none")
     print()
@@ -188,7 +194,7 @@ def _print_summary(summaries, *, top_symbols=10, include_files=True):
         return
 
     for summary in summaries:
-        print(summary.path)
+        print(privacy.path(summary.path))
         print(
             f"  valid={summary.valid} errors={summary.error_count} warnings={summary.warning_count}"
         )
@@ -206,7 +212,7 @@ def _print_summary(summaries, *, top_symbols=10, include_files=True):
         )
         if summary.undefined_symbol_counts:
             print(
-                f"  top unresolved: {_format_counter(summary.undefined_symbol_counts, top=top_symbols)}"
+                f"  top unresolved: {_format_counter(privacy.symbol_counts(summary.undefined_symbol_counts), top=top_symbols)}"
             )
         else:
             print("  top unresolved: none")
@@ -238,6 +244,10 @@ def main(argv=None):
         help="Optional JSON manifest of known external/scalar symbols.",
     )
     parser.add_argument(
+        "--run-directory",
+        help="Resolve all relative INCLUDE paths from this directory (default: current directory).",
+    )
+    parser.add_argument(
         "--summary-only",
         action="store_true",
         help="Print only the corpus-level summary.",
@@ -247,27 +257,38 @@ def main(argv=None):
         action="store_true",
         help="Exit with status 1 if any audited file is invalid or has errors.",
     )
+    parser.add_argument(
+        "--show-private-details",
+        action="store_true",
+        help="Include source paths, symbol names, and exception text in output.",
+    )
     args = parser.parse_args(argv)
+    privacy = ReportPrivacy(show_private_details=args.show_private_details)
 
     if not args.root:
         raise SystemExit("Sample root not provided and SVRF_SAMPLES_DIR is not set.")
 
     root = Path(args.root)
     if not root.exists() or not (root.is_dir() or root.is_file()):
-        raise SystemExit(f"Sample root does not exist or is not a file/directory: {root}")
+        raise SystemExit("Sample root does not exist or is not a file/directory.")
 
-    symbol_manifest = load_symbol_manifest(args.symbol_manifest) if args.symbol_manifest else None
-    summaries = audit_corpus(
-        root,
-        unresolved_policy=args.unresolved_policy,
-        symbol_manifest=symbol_manifest,
-    )
+    try:
+        symbol_manifest = load_symbol_manifest(args.symbol_manifest) if args.symbol_manifest else None
+        summaries = audit_corpus(
+            root,
+            unresolved_policy=args.unresolved_policy,
+            symbol_manifest=symbol_manifest,
+            run_directory=args.run_directory,
+        )
+    except Exception as error:
+        raise SystemExit(f"Cannot audit the requested input: {privacy.exception(error)}") from None
     if not summaries:
-        raise SystemExit(f"No candidate files found under: {root}")
+        raise SystemExit("No candidate files found at the requested location.")
     _print_summary(
         summaries,
         top_symbols=max(args.top_symbols, 1),
         include_files=not args.summary_only,
+        privacy=privacy,
     )
     return 1 if args.fail_on_errors and has_audit_failures(summaries) else 0
 

@@ -14,7 +14,9 @@
         "BY",
         "STEP",
         "WINDOW",
-        "SCALE"
+        "SCALE",
+        "LENGTH",
+        "WIDTH"
       ]
     },
     {

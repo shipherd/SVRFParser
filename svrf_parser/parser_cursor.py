@@ -95,6 +95,7 @@ class ParserCursorMixin:
             "start_offset": token.offset,
             "end_offset": token.end_offset,
             "source_text": self._slice(token.offset, token.end_offset),
+            "filename": self.filename,
         }
 
     def _slice(self, start_offset, end_offset):
@@ -175,6 +176,7 @@ class ParserCursorMixin:
     def _finish_node(self, node, start_idx, end_idx=None):
         if node is None or not isinstance(node, ast.AstNode):
             return node
+        node.filename = self.filename
         if end_idx is None:
             end_idx = self.pos
         start_token = self._find_span_start_token(start_idx)

@@ -43,6 +43,26 @@
     {
       "binding_power": 35,
       "binding_power_source": "static",
+      "name": "text_selection",
+      "parser_method": "_parse_text_selection_led",
+      "priority": 84,
+      "tags": [
+        "text_selection"
+      ]
+    },
+    {
+      "binding_power": 30,
+      "binding_power_source": "static",
+      "name": "cell_selection",
+      "parser_method": "_parse_cell_selection_led",
+      "priority": 82,
+      "tags": [
+        "inside_outside_cell"
+      ]
+    },
+    {
+      "binding_power": 35,
+      "binding_power_source": "static",
       "name": "with",
       "parser_method": "_parse_with_led_from_schema",
       "priority": 80,

@@ -66,11 +66,24 @@ class OperationSchemaEntrySpec:
 
 
 @dataclass(frozen=True, slots=True)
+class OperationContractEntrySpec:
+    name: str
+    min_operands: int | None = None
+    min_constraints: int | None = None
+    min_modifiers: int | None = None
+    requires_content: bool = False
+    operand_roles: tuple[str, ...] = ()
+    variadic_operand_role: str | None = None
+    single_operand_role: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
 class OperationSchemaSpec:
     schema_version: int
     manual_root: str
     generated_from: tuple[str, ...]
     entries: tuple[OperationSchemaEntrySpec, ...]
+    contracts: tuple[OperationContractEntrySpec, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -402,6 +415,19 @@ def load_operation_schema_spec():
                 ),
             )
             for entry in payload["entries"]
+        ),
+        contracts=tuple(
+            OperationContractEntrySpec(
+                name=name,
+                min_operands=entry.get("min_operands"),
+                min_constraints=entry.get("min_constraints"),
+                min_modifiers=entry.get("min_modifiers"),
+                requires_content=entry.get("requires_content", False),
+                operand_roles=tuple(entry.get("operand_roles", ())),
+                variadic_operand_role=entry.get("variadic_operand_role"),
+                single_operand_role=entry.get("single_operand_role"),
+            )
+            for name, entry in payload.get("contracts", {}).items()
         ),
     )
 

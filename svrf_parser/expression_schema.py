@@ -88,6 +88,7 @@ class LedExpressionSchemaRegistry:
 PREFIX_EXPRESSION_SCHEMAS = (
     PrefixExpressionSchema("assignment_reference", 110, frozenset({"assignment_reference"}), "_parse_ident_layer_ref"),
     PrefixExpressionSchema("measurement", 100, frozenset({"measurement"}), "_parse_ident_measurement_nud"),
+    PrefixExpressionSchema("text_selection", 98, frozenset({"text_selection"}), "_parse_text_selection_nud"),
     PrefixExpressionSchema("inside_outside_cell", 95, frozenset({"inside_outside_cell"}), "_parse_inside_outside_cell_nud"),
     PrefixExpressionSchema("edge_binary_prefix", 90, frozenset({"edge_binary_prefix"}), "_parse_prefix_edge_binary_nud"),
     PrefixExpressionSchema("prefix_boolean", 85, frozenset({"prefix_boolean"}), "_parse_prefix_boolean_nud"),
@@ -110,6 +111,8 @@ LED_EXPRESSION_SCHEMAS = (
     LedExpressionSchema("ternary", 100, frozenset({"ternary_question"}), "_parse_ternary_led", 1),
     LedExpressionSchema("equals_symbol", 95, frozenset({"equals_symbol"}), "_parse_symbol_binary_led", 4),
     LedExpressionSchema("arithmetic_symbol", 90, frozenset({"arithmetic_symbol"}), "_parse_symbol_binary_led", binding_power_source="arithmetic_symbol"),
+    LedExpressionSchema("text_selection", 84, frozenset({"text_selection"}), "_parse_text_selection_led", 35),
+    LedExpressionSchema("cell_selection", 82, frozenset({"inside_outside_cell"}), "_parse_cell_selection_led", 30),
     LedExpressionSchema("with", 80, frozenset({"with"}), "_parse_with_led_from_schema", 35),
     LedExpressionSchema("measurement", 75, frozenset({"measurement"}), "_parse_measurement_led", 35),
     LedExpressionSchema("holes_or_donut", 70, frozenset({"holes_or_donut"}), "_parse_holes_or_donut_led_from_schema", 35),

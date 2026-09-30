@@ -2,28 +2,15 @@
 
 from __future__ import annotations
 
-WITH_OPS = frozenset({"WITH TEXT", "WITH WIDTH", "WITH EDGE", "WITH NEIGHBOR"})
+from .operation_schema import OPERATION_SCHEMA_REGISTRY
 
-DRCOP_MIN_OPERANDS = {
-    "DFM DV": 1,
-    "DFM PROPERTY": 1,
-    "DFM PROPERTY NET": 1,
-    "DFM SPACE": 1,
-    "DFM TEXT": 1,
-    "NET": 1,
-    "NET AREA": 1,
-    "NET AREA RATIO": 1,
-    "NET INTERACT": 1,
-    "PATHCHK": 1,
-}
+_CONTRACTS = OPERATION_SCHEMA_REGISTRY.contracts
 
-DRCOP_MIN_CONSTRAINTS = {
-    "NET AREA": 1,
-    "NET AREA RATIO": 1,
-    "NET INTERACT": 1,
-}
+WITH_OPS = frozenset(name for name, entry in _CONTRACTS.items() if entry.requires_content)
 
-DRCOP_MIN_MODIFIERS = {
-    "DEVICE LAYER": 1,
-    "PATHCHK": 1,
-}
+DRCOP_MIN_OPERANDS = {name: entry.min_operands for name, entry in _CONTRACTS.items()
+                      if entry.min_operands is not None}
+DRCOP_MIN_CONSTRAINTS = {name: entry.min_constraints for name, entry in _CONTRACTS.items()
+                         if entry.min_constraints is not None}
+DRCOP_MIN_MODIFIERS = {name: entry.min_modifiers for name, entry in _CONTRACTS.items()
+                       if entry.min_modifiers is not None}

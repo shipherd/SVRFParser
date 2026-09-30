@@ -8,9 +8,10 @@ from dataclasses import dataclass, field
 from . import ast
 from .diagnostics import Diagnostic, SEVERITY_ERROR
 from .keywords import _DIRECTIVE_HEADS, _DRC_MODIFIERS, _SVRF_KEYWORDS
-from .symbol_convention import SYMBOL_CONVENTION_REGISTRY
+from .symbol_availability import Availability, guarded_availability
 
-_SCALAR_TUPLE_HEADS = SYMBOL_CONVENTION_REGISTRY.scalar_tuple_heads
+_SCOPE_KINDS = ("layers", "variables", "macros", "groups", "rules", "preprocessor")
+
 _SEMANTIC_REFERENCE_SKIP_NAMES = frozenset(
     {
         "ALL",
@@ -80,7 +81,7 @@ def _node_diagnostic(severity, code, message, node, filename, metadata=None):
         severity=severity,
         code=code,
         message=message,
-        filename=filename,
+        filename=getattr(node, "filename", None) or filename,
         line=getattr(node, "line", 0),
         col=getattr(node, "col", 0),
         end_line=getattr(node, "end_line", 0),
@@ -88,6 +89,7 @@ def _node_diagnostic(severity, code, message, node, filename, metadata=None):
         start_offset=getattr(node, "start_offset", 0),
         end_offset=getattr(node, "end_offset", 0),
         snippet=getattr(node, "source_text", None),
+        include_stack=getattr(node, "include_stack", ()),
         metadata=metadata,
     )
 
@@ -145,6 +147,16 @@ class SymbolTable:
     conditional_rules: set = field(default_factory=set)
     conditional_preprocessor: set = field(default_factory=set)
     local_only_references: set = field(default_factory=set)
+    definition_paths: dict = field(default_factory=dict)
+
+    def availability(self, kinds, name, branch_path=()):
+        name = _normalized_scope_name(name)
+        if any(name in getattr(self, kind) for kind in kinds):
+            return Availability.DEFINITE
+        paths = [path for kind in kinds for path in self.definition_paths.get((kind, name), ())]
+        if not paths and any(name in getattr(self, f"conditional_{kind}") for kind in kinds):
+            return Availability.CONDITIONAL
+        return guarded_availability(paths, branch_path)
 
     @property
     def layer_like_names(self):
@@ -156,6 +168,7 @@ class SymbolTable:
         )
 
     def knows_layer_like(self, name):
+        name = _normalized_scope_name(name)
         return (
             name in self.layers
             or name in self.groups
@@ -164,12 +177,15 @@ class SymbolTable:
         )
 
     def knows_macro(self, name):
+        name = _normalized_scope_name(name)
         return name in self.macros or name in self.conditional_macros
 
     def knows_variable(self, name):
+        name = _normalized_scope_name(name)
         return name in self.variables or name in self.conditional_variables
 
     def knows_preprocessor(self, name):
+        name = _normalized_scope_name(name)
         return name in self.preprocessor or name in self.conditional_preprocessor
 
     def knows_reference(self, name):
@@ -185,86 +201,98 @@ class ValidationScope:
     groups: set = field(default_factory=set)
     rules: set = field(default_factory=set)
     preprocessor: set = field(default_factory=set)
+    defer_variable_order: bool = False
+    symbol_table: SymbolTable | None = None
+    branch_path: frozenset = frozenset()
+    conditional: dict = field(default_factory=dict)
 
     @classmethod
     def from_symbol_table(cls, symbol_table):
+        # Layers permit forward lookup; variables enter scope in source order.
         return cls(
-            layers=set(symbol_table.layers) | set(symbol_table.conditional_layers),
-            variables=set(symbol_table.variables)
-            | set(symbol_table.conditional_variables),
-            macros=set(symbol_table.macros) | set(symbol_table.conditional_macros),
-            groups=set(symbol_table.groups) | set(symbol_table.conditional_groups),
-            rules=set(symbol_table.rules) | set(symbol_table.conditional_rules),
-            preprocessor=set(symbol_table.preprocessor)
-            | set(symbol_table.conditional_preprocessor),
+            layers=set(symbol_table.layers),
+            macros=set(symbol_table.macros),
+            groups=set(symbol_table.groups),
+            rules=set(symbol_table.rules),
+            preprocessor=set(symbol_table.preprocessor),
+            symbol_table=symbol_table,
         )
 
-    def child(self):
-        return ValidationScope(parent=self)
+    def child(self, branch=None):
+        path = self.branch_path if branch is None else self.branch_path | {branch}
+        return ValidationScope(
+            parent=self, defer_variable_order=self.defer_variable_order,
+            symbol_table=self.symbol_table, branch_path=frozenset(path),
+        )
 
-    def merge_from(self, other):
-        self.layers.update(other.layers)
-        self.variables.update(other.variables)
-        self.macros.update(other.macros)
-        self.groups.update(other.groups)
-        self.rules.update(other.rules)
-        self.preprocessor.update(other.preprocessor)
+    def merge_branches(self, branches):
+        for kind in _SCOPE_KINDS:
+            definite = set.intersection(*(getattr(branch, kind) for branch in branches))
+            possible = set.union(*(getattr(branch, kind) | branch.conditional.get(kind, set())
+                                   for branch in branches))
+            getattr(self, kind).update(definite)
+            self.conditional.setdefault(kind, set()).update(possible - definite)
+            self.conditional[kind].difference_update(getattr(self, kind))
+
+    def availability(self, kinds, name):
+        name = _normalized_scope_name(name)
+        possible = False
+        scope = self
+        while scope is not None:
+            if any(name in getattr(scope, kind) for kind in kinds):
+                return Availability.DEFINITE
+            possible |= any(name in scope.conditional.get(kind, ()) for kind in kinds)
+            scope = scope.parent
+        if self.symbol_table is not None:
+            forward_kinds = tuple(kind for kind in kinds if kind != "variables")
+            forward = self.symbol_table.availability(forward_kinds, name, self.branch_path)
+            if forward == Availability.DEFINITE:
+                return forward
+            if not possible:
+                return forward
+        return Availability.CONDITIONAL if possible else Availability.ABSENT
 
     def define_layer(self, name):
         if name:
-            self.layers.add(name)
+            self.layers.add(_normalized_scope_name(name))
 
     def define_variable(self, name):
         if name:
-            self.variables.add(name)
+            self.variables.add(_normalized_scope_name(name))
 
     def define_macro(self, name):
         if name:
-            self.macros.add(name)
+            self.macros.add(_normalized_scope_name(name))
 
     def define_group(self, name):
         if name:
-            self.groups.add(name)
+            self.groups.add(_normalized_scope_name(name))
 
     def define_rule(self, name):
         if name:
-            self.rules.add(name)
+            self.rules.add(_normalized_scope_name(name))
 
     def define_preprocessor(self, name):
         if name:
-            self.preprocessor.add(name)
+            self.preprocessor.add(_normalized_scope_name(name))
 
     def define_placeholder(self, name):
         if not name:
             return
-        self.layers.add(name)
-        self.variables.add(name)
+        self.layers.add(_normalized_scope_name(name))
+        self.variables.add(_normalized_scope_name(name))
 
     def knows_layer_like(self, name):
-        scope = self
-        while scope is not None:
-            if name in scope.layers or name in scope.groups:
-                return True
-            scope = scope.parent
-        return False
+        return self.availability(("layers", "groups"), name) == Availability.DEFINITE
 
     def knows_macro(self, name):
-        scope = self
-        while scope is not None:
-            if name in scope.macros:
-                return True
-            scope = scope.parent
-        return False
+        return self.availability(("macros",), name) == Availability.DEFINITE
 
     def knows_variable(self, name):
-        scope = self
-        while scope is not None:
-            if name in scope.variables:
-                return True
-            scope = scope.parent
-        return False
+        return self.availability(("variables",), name) == Availability.DEFINITE
 
     def knows_preprocessor(self, name):
+        name = _normalized_scope_name(name)
         scope = self
         while scope is not None:
             if name in scope.preprocessor:
@@ -309,7 +337,7 @@ def _normalized_scope_name(name):
     return str(name).upper()
 
 
-def _collect_statement_placeholders(statements):
+def _collect_statement_placeholders(statements, *, include_conditionals=True):
     names = set()
     pending = list(reversed(statements or []))
     while pending:
@@ -323,13 +351,16 @@ def _collect_statement_placeholders(statements):
             pending.extend(reversed(current.body))
             continue
         if isinstance(current, ast.IfDef):
-            pending.extend(reversed(current.else_body))
-            pending.extend(reversed(current.then_body))
+            if include_conditionals:
+                pending.extend(reversed(current.else_body))
+                pending.extend(reversed(current.then_body))
             continue
         if isinstance(current, ast.EncryptedBlock):
             pending.extend(reversed(current.body))
             continue
         if isinstance(current, ast.IfExpr):
+            if not include_conditionals:
+                continue
             pending.extend(reversed(current.else_body))
             for branch in reversed(current.elseifs):
                 if isinstance(branch, tuple) and len(branch) == 2:
@@ -376,13 +407,6 @@ def _collect_local_scope_reference_candidates(statements):
                     pending.extend(reversed(body))
             pending.extend(reversed(current.then_body))
     return names
-
-
-def _tuple_value_context(head, default):
-    upper_head = str(head).upper()
-    if upper_head == "BY" or upper_head.endswith(" BY") or upper_head in _SCALAR_TUPLE_HEADS:
-        return "scalar"
-    return default
 
 
 def _collect_property_modifier_placeholders(modifiers):
@@ -475,9 +499,10 @@ def build_symbol_table(statements, filename="<input>", strict=False):
     table = SymbolTable()
     diagnostics = []
 
-    def add_symbol(kind, name, stmt, stmt_filename, conditional=False):
+    def add_symbol(kind, name, stmt, stmt_filename, branch_path=()):
         if not name:
             return
+        name = _normalized_scope_name(name)
         if kind == "layer":
             bucket = table.layers
             conditional_bucket = table.conditional_layers
@@ -497,7 +522,9 @@ def build_symbol_table(statements, filename="<input>", strict=False):
             bucket = table.preprocessor
             conditional_bucket = table.conditional_preprocessor
 
-        if conditional:
+        plural = kind + "s" if kind != "preprocessor" else kind
+        table.definition_paths.setdefault((plural, name), []).append(frozenset(branch_path))
+        if branch_path:
             if name not in bucket:
                 conditional_bucket.add(name)
             return
@@ -516,48 +543,51 @@ def build_symbol_table(statements, filename="<input>", strict=False):
             return
         bucket[name] = stmt
 
-    def visit_statements(stream, default_filename, conditional=False):
+    def visit_statements(stream, default_filename):
         pending = []
 
-        def push_stream(items, item_filename, item_conditional):
+        def push_stream(items, item_filename, branch_path):
             for entry in reversed(list(items)):
-                pending.append((entry, item_filename, item_conditional))
+                pending.append((entry, item_filename, branch_path))
 
-        push_stream(stream, default_filename, conditional)
+        push_stream(stream, default_filename, ())
         while pending:
-            item, item_default_filename, item_conditional = pending.pop()
+            item, item_default_filename, branch_path = pending.pop()
             if isinstance(item, tuple):
                 stmt, stmt_filename = item
             else:
                 stmt, stmt_filename = item, item_default_filename
 
             if isinstance(stmt, (ast.LayerDef, ast.LayerAssignment)):
-                add_symbol("layer", stmt.name, stmt, stmt_filename, conditional=item_conditional)
+                add_symbol("layer", stmt.name, stmt, stmt_filename, branch_path)
             elif isinstance(stmt, ast.VariableDef):
-                add_symbol("variable", stmt.name, stmt, stmt_filename, conditional=item_conditional)
+                add_symbol("variable", stmt.name, stmt, stmt_filename, branch_path)
             elif isinstance(stmt, ast.DMacro):
-                add_symbol("macro", stmt.name, stmt, stmt_filename, conditional=item_conditional)
+                add_symbol("macro", stmt.name, stmt, stmt_filename, branch_path)
             elif isinstance(stmt, ast.Group):
-                add_symbol("group", stmt.name, stmt, stmt_filename, conditional=item_conditional)
+                add_symbol("group", stmt.name, stmt, stmt_filename, branch_path)
             elif isinstance(stmt, ast.RuleCheckBlock):
-                add_symbol("rule", stmt.name, stmt, stmt_filename, conditional=item_conditional)
+                add_symbol("rule", stmt.name, stmt, stmt_filename, branch_path)
             elif isinstance(stmt, ast.Define) and stmt.name:
                 add_symbol(
                     "preprocessor",
                     stmt.name,
                     stmt,
                     stmt_filename,
-                    conditional=item_conditional,
+                    branch_path=branch_path,
                 )
 
             if isinstance(stmt, ast.IfDef):
-                push_stream(stmt.else_body, stmt_filename, True)
-                push_stream(stmt.then_body, stmt_filename, True)
+                push_stream(stmt.else_body, stmt_filename, (*branch_path, (id(stmt), False)))
+                push_stream(stmt.then_body, stmt_filename, (*branch_path, (id(stmt), True)))
             elif isinstance(stmt, ast.EncryptedBlock) and stmt.body:
-                push_stream(stmt.body, stmt_filename, item_conditional)
+                push_stream(stmt.body, stmt_filename, branch_path)
 
     visit_statements(statements, filename)
-    table.local_only_references.update(_collect_local_scope_reference_candidates(statements))
+    table.local_only_references.update(
+        _normalized_scope_name(name)
+        for name in _collect_local_scope_reference_candidates(statements)
+    )
     table.local_only_references.difference_update(table.layer_like_names)
     table.local_only_references.difference_update(table.variables)
     table.local_only_references.difference_update(table.conditional_variables)

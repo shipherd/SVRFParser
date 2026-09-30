@@ -11,11 +11,13 @@ from .semantic_symbols import (
     SymbolTable,
     ValidationScope,
     _node_diagnostic,
+    _normalized_scope_name,
     _should_skip_expression_reference,
     _should_skip_symbol_name,
     build_symbol_table,
 )
 from .semantic_value_validation import ValueValidationMixin
+from .symbol_availability import Availability
 
 
 class SemanticValidator(DirectiveValidationMixin, ValueValidationMixin):
@@ -49,14 +51,56 @@ class SemanticValidator(DirectiveValidationMixin, ValueValidationMixin):
             return
         if scope.knows_layer_like(name):
             return
+        if self._warn_conditional_symbol(("layers", "groups"), name, node, scope):
+            return
         self.warning(code, f"Unknown layer or group reference {name}", node, metadata={"symbol": name})
 
-    def _warn_unknown_reference(self, code, name, node, scope, context="generic"):
-        if _should_skip_expression_reference(name):
+    def _warn_conditional_symbol(self, kinds, name, node, scope, context="generic"):
+        status = scope.availability(kinds, name)
+        if status == Availability.ABSENT and self.symbol_table is not None:
+            status = self.symbol_table.availability(kinds, name, scope.branch_path)
+        if status not in {Availability.CONDITIONAL, Availability.UNAVAILABLE}:
+            return False
+        message = (f"Reference {name} is only defined in some conditional branches"
+                   if status == Availability.CONDITIONAL
+                   else f"Reference {name} is only defined in a mutually exclusive branch")
+        self.warning(
+            f"semantic.reference.{status.value}", message, node,
+            metadata={"symbol": name, "availability": status.value, "reference_context": context},
+        )
+        return True
+
+    def _validate_macro_reference(self, name, node, scope, *, device=False):
+        if scope.knows_macro(name) or self._warn_conditional_symbol(("macros",), name, node, scope):
+            return
+        self.error(
+            "semantic.device.undefined_cmacro" if device else "semantic.macro.undefined",
+            f"DEVICE references undefined CMACRO {name}" if device
+            else f"Macro call references undefined {node.kind} {name}",
+            node,
+        )
+
+    def _warn_unknown_reference(self, code, name, node, scope, context="generic", quoted=False):
+        if not name or context == "literal":
             return
         if scope.knows_reference(name):
             return
-        if name in self.symbol_table.local_only_references:
+        known = self.symbol_table.knows_reference(name)
+        if not quoted and not known and _should_skip_expression_reference(name):
+            return
+        if self._warn_conditional_symbol(("layers", "groups", "variables"), name, node, scope, context):
+            return
+        if self.symbol_table.availability(("variables",), name, scope.branch_path) == Availability.DEFINITE:
+            if scope.defer_variable_order:
+                return
+            self.error(
+                "semantic.variable.before_definition",
+                f"Variable {name} is used before its VARIABLE declaration",
+                node,
+                metadata={"symbol": name},
+            )
+            return
+        if _normalized_scope_name(name) in self.symbol_table.local_only_references:
             self.warning(
                 "semantic.reference.local_scope_only",
                 f"Reference {name} is only defined in local rule, macro, or property scopes elsewhere in this file",

@@ -46,6 +46,7 @@ _SCOPE_PREFIXES = (
     "semantic.trace_property.",
     "semantic.device.",
     "semantic.macro.",
+    "semantic.variable.",
 )
 
 

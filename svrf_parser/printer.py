@@ -4,7 +4,10 @@ Used for round-trip testing: parse -> print -> re-parse -> compare.
 Not intended to reproduce original formatting exactly, only semantic equivalence.
 """
 
+import re
+
 from . import ast_nodes as ast
+from .modifiers import NamedModifier, as_modifier
 
 
 class SvrfPrinter:
@@ -17,6 +20,23 @@ class SvrfPrinter:
         if fn:
             return fn(node)
         return f"/* unknown {type(node).__name__} */"
+
+    @staticmethod
+    def _quote(value):
+        escaped = str(value).replace('\\', '\\\\').replace('"', '\\"')
+        escaped = escaped.replace('\n', '\\n').replace('\r', '\\r').replace('\t', '\\t')
+        return '"' + escaped + '"'
+
+    def _name(self, name):
+        if name == name.upper() and re.fullmatch(r"[A-Z_][A-Z0-9_.]*", name):
+            return name
+        return self._quote(name)
+
+    def _operand(self, node):
+        text = self.emit(node)
+        if isinstance(node, (ast.BinaryOp, ast.ConstrainedExpr, ast.DRCOp)):
+            return f"({text})"
+        return text
 
     # ---- Program ----
 
@@ -49,39 +69,62 @@ class SvrfPrinter:
 
     def _emit_Include(self, node):
         keyword = "#INCLUDE" if getattr(node, "preprocessor", False) else "INCLUDE"
-        return f'{keyword} "{node.path}"'
+        return f'{keyword} {self._quote(node.path)}'
 
     def _emit_EncryptedBlock(self, node):
-        return f"#ENCRYPT\n{node.content}\n#ENDCRYPT"
+        return f"{node.directive}\n{node.content}\n#ENDCRYPT"
 
     # ---- Layer Definitions ----
 
     def _emit_LayerDef(self, node):
         nums = ' '.join(str(n) for n in node.numbers)
-        return f"LAYER {node.name} {nums}"
+        return f"LAYER {self._name(node.name)} {nums}"
 
     def _emit_LayerMap(self, node):
         return (f"LAYER MAP {node.gds_num} {node.map_type} "
                 f"{node.type_num} {node.internal_num}")
 
     def _emit_VariableDef(self, node):
-        expr_str = self.emit(node.expr) if node.expr else ''
-        return f"VARIABLE {node.name} {expr_str}".rstrip()
+        values = "ENVIRONMENT" if node.environment else ' '.join(self.emit(value) for value in node.values)
+        return f"VARIABLE {self._name(node.name)} {values}".rstrip()
 
     # ---- Directive ----
+
+    def _emit_DfmSpec(self, node):
+        parts = ["DFM SPEC " + node.kind]
+        if node.variant:
+            parts.append(node.variant)
+        parts.append(self._name(node.name))
+        parts.extend(self.emit(argument) for argument in node.arguments)
+        return '\n'.join([' '.join(parts)] + [self.emit(clause) for clause in node.body])
+
+    def _emit_DfmClause(self, node):
+        return ' '.join(list(node.keywords) + [self.emit(argument) for argument in node.arguments])
+
+    def _emit_BracketExpr(self, node):
+        return '[' + ' '.join(self.emit(item) for item in node.items) + ']'
+
+    def _emit_PercLoad(self, node):
+        return '\n'.join(['PERC LOAD ' + self._name(node.function)] + [self.emit(item) for item in node.body])
+
+    def _emit_PercGroup(self, node):
+        return '(' + ' '.join(self.emit(item) for item in node.items) + ')'
 
     def _emit_Directive(self, node):
         parts = list(node.keywords)
         is_description = (node.keywords == ['@'])
         for a in node.arguments:
+            if isinstance(a, ast.Include) and a.embedded:
+                parts.append('\n' + self.emit(a))
+                continue
             if isinstance(a, ast.AstNode):
                 parts.append(self.emit(a))
             elif isinstance(a, str):
                 if is_description:
                     # Description text is not quoted
                     parts.append(a)
-                elif ' ' in a or '.' in a or '/' in a or '\\' in a:
-                    parts.append(f'"{a}"')
+                elif a != a.upper() or ' ' in a or '.' in a or '/' in a or '\\' in a:
+                    parts.append(self._quote(a))
                 else:
                     parts.append(a)
             else:
@@ -95,12 +138,12 @@ class SvrfPrinter:
 
     def _emit_LayerAssignment(self, node):
         expr_str = self.emit(node.expression) if node.expression else ''
-        return f"{node.name} = {expr_str}"
+        return f"{self._name(node.name)} = {expr_str}"
 
     # ---- Rule Check Block ----
 
     def _emit_RuleCheckBlock(self, node):
-        parts = [f"{node.name} {{"]
+        parts = [f"{self._name(node.name)} {{"]
         if node.description:
             for line_segs in node.description:
                 parts.append(f"  @ {self._emit_desc_line(line_segs)}")
@@ -123,9 +166,13 @@ class SvrfPrinter:
 
     def _emit_Connect(self, node):
         keyword = "SCONNECT" if node.soft else "CONNECT"
-        parts = [keyword] + list(node.layers)
+        parts = [keyword] + [self._name(layer) for layer in node.layers]
         if node.via_layer:
-            parts.extend(["BY", node.via_layer])
+            parts.extend(["BY", self._name(node.via_layer)])
+        if node.link_name is not None:
+            parts.extend(["LINK", self._quote(node.link_name)])
+        if node.abut_also:
+            parts.extend(["ABUT", "ALSO"])
         return ' '.join(parts)
 
     # ---- Device ----
@@ -156,11 +203,11 @@ class SvrfPrinter:
     # ---- DMacro ----
 
     def _emit_DMacro(self, node):
-        params = ' '.join(node.params)
+        params = ' '.join(self._name(param) for param in node.params)
         if params:
-            header = f"DMACRO {node.name} {params} {{"
+            header = f"DMACRO {self._name(node.name)} {params} {{"
         else:
-            header = f"DMACRO {node.name} {{"
+            header = f"DMACRO {self._name(node.name)} {{"
         parts = [header]
         for s in node.body:
             parts.append(f"  {self.emit(s)}")
@@ -168,7 +215,10 @@ class SvrfPrinter:
         return '\n'.join(parts)
 
     def _emit_MacroCall(self, node):
-        parts = [node.kind, node.name]
+        if node.kind == "FMACRO":
+            args = ', '.join(self.emit(arg) if isinstance(arg, ast.AstNode) else str(arg) for arg in node.arguments)
+            return f"FMACRO {self._name(node.name)}({args})"
+        parts = [node.kind, self._name(node.name)]
         for arg in node.arguments:
             if isinstance(arg, ast.AstNode):
                 parts.append(self.emit(arg))
@@ -201,12 +251,14 @@ class SvrfPrinter:
     # ---- Expressions ----
 
     def _emit_BinaryOp(self, node):
-        left = self.emit(node.left) if node.left else ''
-        right = self.emit(node.right) if node.right else ''
+        if node.op == "?:" and isinstance(node.right, ast.BinaryOp) and node.right.op == ":":
+            return f"{self._operand(node.left)} ? {self.emit(node.right.left)} : {self._operand(node.right.right)}"
+        left = self._operand(node.left) if node.left else ''
+        right = self._operand(node.right) if node.right else ''
         return f"{left} {node.op} {right}"
 
     def _emit_UnaryOp(self, node):
-        operand = self.emit(node.operand) if node.operand else ''
+        operand = self._operand(node.operand) if node.operand else ''
         return f"{node.op} {operand}"
 
     def _emit_LayerRef(self, node):
@@ -219,7 +271,7 @@ class SvrfPrinter:
         return str(node.value)
 
     def _emit_StringLiteral(self, node):
-        return f'"{node.value}"'
+        return self._quote(node.value)
 
     def _emit_FuncCall(self, node):
         args = ', '.join(self.emit(a) for a in node.args)
@@ -228,7 +280,7 @@ class SvrfPrinter:
     # ---- Constraints ----
 
     def _emit_Constraint(self, node):
-        val = self.emit(node.value) if hasattr(node.value, 'line') else str(node.value)
+        val = self._operand(node.value) if isinstance(node.value, ast.AstNode) else str(node.value)
         return f"{node.op} {val}"
 
     def _emit_ConstrainedExpr(self, node):
@@ -236,7 +288,7 @@ class SvrfPrinter:
         parts = [expr_str]
         for c in node.constraints:
             parts.append(self.emit(c))
-        for m in (node.modifiers or []):
+        for m in node.modifier_nodes:
             parts.append(self._emit_modifier(m))
         return ' '.join(parts)
 
@@ -248,20 +300,22 @@ class SvrfPrinter:
             if isinstance(op, str):
                 parts.append(op)
             else:
-                parts.append(self.emit(op))
+                parts.append(self._operand(op))
         for c in node.constraints:
             parts.append(self.emit(c))
-        for m in (node.modifiers or []):
+        for m in node.modifier_nodes:
             parts.append(self._emit_modifier(m))
         return ' '.join(parts)
 
     def _emit_modifier(self, m):
-        """Emit a modifier which can be a string, AST node, or ('BY', expr) tuple."""
-        if isinstance(m, tuple) and len(m) == 2 and m[0] == 'BY':
-            return 'BY ' + self.emit(m[1]) if isinstance(m[1], ast.AstNode) else f'BY {m[1]}'
-        if isinstance(m, ast.AstNode):
-            return self.emit(m)
-        return str(m)
+        """Render modifiers through the shared compatibility adapter."""
+        modifier = as_modifier(m)
+        value = modifier.value
+        if isinstance(value, ast.AstNode):
+            rendered = self._operand(value) if isinstance(modifier, NamedModifier) else self.emit(value)
+        else:
+            rendered = str(value)
+        return f"{modifier.name} {rendered}" if isinstance(modifier, NamedModifier) else rendered
 
     # ---- IfExpr (inside DMACRO / PropertyBlock) ----
 
