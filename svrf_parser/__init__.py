@@ -5,6 +5,7 @@ from __future__ import annotations
 from . import ast
 from .lexer import Lexer
 from .parser import Parser
+from .source_map import read_source_text
 from .validation_common import ValidationResult
 from .validation_pipeline import (
     is_valid_svrf,
@@ -42,16 +43,12 @@ def parse_with_diagnostics(text, filename="<input>", strict=False):
 
 def parse_file(path, strict=False):
     """Parse an SVRF file and return an AST Program node."""
-    with open(path, "r", encoding="utf-8", errors="replace") as f:
-        text = f.read()
-    return parse(text, filename=str(path), strict=strict)
+    return parse(read_source_text(path), filename=str(path), strict=strict)
 
 
 def parse_file_with_diagnostics(path, strict=False):
     """Parse an SVRF file and return ``(Program, warnings)``."""
-    with open(path, "r", encoding="utf-8", errors="replace") as f:
-        text = f.read()
-    return parse_with_diagnostics(text, filename=str(path), strict=strict)
+    return parse_with_diagnostics(read_source_text(path), filename=str(path), strict=strict)
 
 
 __all__ = [

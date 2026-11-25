@@ -14,6 +14,7 @@ from .statement_schema import STATEMENT_SCHEMA_REGISTRY
 from .tokens import Token, TokenType
 
 TT = TokenType
+_NAME_PART_TYPES = (TT.IDENT, TT.STRING, TT.NUMBER)
 
 
 @dataclass(frozen=True, slots=True)
@@ -157,6 +158,12 @@ class StatementSegmenter:
         if next_idx >= self.length:
             return False
         nxt = self.tokens[next_idx]
+        if nxt.type == TT.IDENT and nxt.value == "LAYER":
+            name = self._token_at(next_idx + 1)
+            end = self.scan_name_end(next_idx + 1)
+            if (name.type == TT.IDENT and name.value in {"MAP", "RESOLUTION"}
+                    or end is not None and self._token_at(end).type == TT.NUMBER):
+                return False
         if nxt.type == TT.SYMBOL and nxt.value == "[":
             return True
         if nxt.type == TT.SYMBOL and nxt.value in self.config.comparison_symbols:
@@ -251,10 +258,18 @@ class StatementSegmenter:
         return False
 
     def scan_name_end(self, idx):
-        scanned = self.scan_name(idx)
-        if scanned is None:
+        if idx >= self.length or self.tokens[idx].type not in _NAME_PART_TYPES:
             return None
-        return scanned[1]
+        while True:
+            idx = self.next_non_newline_index(idx + 1)
+            if idx >= self.length:
+                return idx
+            token = self.tokens[idx]
+            if token.type != TT.SYMBOL or token.value not in {":", "::"}:
+                return idx
+            idx = self.next_non_newline_index(idx + 1)
+            if idx >= self.length or self.tokens[idx].type not in _NAME_PART_TYPES:
+                return None
 
     def _name_part_value(self, token):
         if token.type == TT.IDENT:
@@ -266,43 +281,35 @@ class StatementSegmenter:
             return str(token.raw)
         return None
 
+    def _name_from_span(self, start, end):
+        if end == start + 1:
+            return self._name_part_value(self.tokens[start])
+        return "".join(
+            token.value if token.type == TT.SYMBOL else self._name_part_value(token)
+            for token in self.tokens[start:end] if token.type != TT.NEWLINE
+        )
+
     def scan_name(self, idx):
-        if idx >= self.length:
-            return None
-        part = self._name_part_value(self.tokens[idx])
-        if part is None:
-            return None
-        parts = [part]
-        idx += 1
-        while True:
-            idx = self.next_non_newline_index(idx)
-            if idx >= self.length:
-                break
-            token = self.tokens[idx]
-            if token.type != TT.SYMBOL or token.value not in {":", "::"}:
-                break
-            parts.append(token.value)
-            idx += 1
-            idx = self.next_non_newline_index(idx)
-            if idx >= self.length:
-                return None
-            part = self._name_part_value(self.tokens[idx])
-            if part is None:
-                return None
-            parts.append(part)
-            idx += 1
-        return "".join(parts), idx
+        end = self.scan_name_end(idx)
+        return None if end is None else (self._name_from_span(idx, end), end)
 
     def scan_rule_check_header(self, idx):
-        scanned = self.scan_name(idx)
-        if scanned is not None:
-            name, next_idx = scanned
-            next_idx = self.next_non_newline_index(next_idx)
-            token = self._token_at(next_idx)
+        end = self.scan_name_end(idx)
+        if end is not None and end < self.length:
+            token = self.tokens[end]
             if token.type == TT.SYMBOL and token.value == "{":
-                body_start = self.next_non_newline_index(next_idx + 1)
-                return RuleCheckHeader(name=name, body_start=body_start)
-        return self.scan_compact_rule_check_header(idx)
+                return RuleCheckHeader(
+                    name=self._name_from_span(idx, end),
+                    body_start=self.next_non_newline_index(end + 1),
+                )
+        # A compact label can span several tokens, but never a gap between its parts.
+        if idx + 1 < self.length:
+            first, following = self.tokens[idx], self.tokens[idx + 1]
+            if (first.type in _NAME_PART_TYPES and following.offset == first.end_offset
+                    and (following.type in _NAME_PART_TYPES or
+                         (following.type == TT.SYMBOL and following.value in {":", "::"}))):
+                return self.scan_compact_rule_check_header(idx)
+        return None
 
     def scan_compact_rule_check_header(self, idx):
         if idx >= self.length:
@@ -404,12 +411,9 @@ class StatementSegmenter:
 
     def starts_assignment_at(self, idx):
         end = self.scan_name_end(idx)
-        if end is None:
+        if end is None or end >= self.length:
             return False
-        idx = self.next_non_newline_index(end)
-        if idx >= self.length:
-            return False
-        token = self.tokens[idx]
+        token = self.tokens[end]
         return token.type == TT.SYMBOL and token.value == "="
 
     def starts_rule_check_at(self, idx, mode):
@@ -607,10 +611,6 @@ class StatementSegmenter:
                 return ("directive", token.value)
             return ("expression", token.value)
         if token.type in (TT.STRING, TT.NUMBER):
-            if self.starts_assignment_at(idx):
-                return ("assignment", str(token.raw))
-            if self.starts_rule_check_at(idx, mode):
-                return ("rule_check", str(token.raw))
             return ("expression", str(token.raw))
         return ("unknown", str(token.raw))
 

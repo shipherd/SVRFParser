@@ -92,7 +92,8 @@ def _push_statement_contexts(pending, annotations, node, context):
             pending.append(("statement", clause, context))
         return
     if isinstance(node, ast.DfmClause):
-        scalar_heads = {"STEP", "DISPLACE", "OFFSET", "SETBACK", "WINDOW", "GWINDOW", "ALLOW", "ALLOWX", "ALLOWY"}
+        scalar_heads = {"STEP", "DISPLACE", "OFFSET", "SETBACK", "WINDOW", "GWINDOW", "ALLOW", "ALLOWX", "ALLOWY",
+                        "VIASHAPE", "ENC1", "ENC2"}
         head = node.keywords[0] if node.keywords else ""
         argument_context = SCALAR_EXPRESSION if head in scalar_heads else LITERAL_STRING
         for index, argument in reversed(list(enumerate(node.arguments))):

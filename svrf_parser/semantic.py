@@ -7,6 +7,7 @@ from .diagnostics import SEVERITY_ERROR, SEVERITY_WARNING
 from .expression_contexts import annotate_expression_contexts
 from .semantic_directives import DirectiveValidationMixin
 from .semantic_node_dispatch import validate_semantic_node
+from .semantic_macros import check_fmacro_enablement, check_macro_call, check_macro_cycles
 from .semantic_symbols import (
     SymbolTable,
     ValidationScope,
@@ -29,6 +30,9 @@ class SemanticValidator(DirectiveValidationMixin, ValueValidationMixin):
         self.symbol_table = symbol_table or SymbolTable()
         self.expression_contexts = expression_contexts
         self.diagnostics = []
+        self.macro_calls = {}
+        self.fmacro_calls = []
+        self.fmacro_enable_paths = []
 
     def error(self, code, message, node, metadata=None):
         self.diagnostics.append(
@@ -44,6 +48,8 @@ class SemanticValidator(DirectiveValidationMixin, ValueValidationMixin):
     def validate(self, program):
         scope = ValidationScope.from_symbol_table(self.symbol_table)
         self._validate_statement_list(program.statements, scope)
+        check_fmacro_enablement(self)
+        check_macro_cycles(self)
         return self.diagnostics
 
     def _warn_unknown_layer(self, code, name, node, scope):
@@ -54,6 +60,32 @@ class SemanticValidator(DirectiveValidationMixin, ValueValidationMixin):
         if self._warn_conditional_symbol(("layers", "groups"), name, node, scope):
             return
         self.warning(code, f"Unknown layer or group reference {name}", node, metadata={"symbol": name})
+
+    def _validate_local_svrf(self, node, outer):
+        table, diagnostics = build_symbol_table(node.body, self.filename, self.strict)
+        self.diagnostics.extend(diagnostics)
+        scope = ValidationScope.from_symbol_table(table)
+        while outer is not None:
+            scope.variables.update(outer.variables)
+            scope.conditional.setdefault("variables", set()).update(outer.conditional.get("variables", ()))
+            outer = outer.parent
+        names = {key.upper() for key, _ in node.variables}
+        if (scope.variables & (names | set(table.variables)) or names & set(table.variables)
+                or len(names) != len(node.variables)):
+            self.error("semantic.dfm.local_variable", "Conflicting local SVRF variable declarations", node)
+        for key in names:
+            scope.define_variable(key)
+        for name, _ in node.inputs:
+            scope.define_layer(name)
+        for name in node.outputs:
+            if not table.knows_layer_like(name):
+                self.error("semantic.dfm.local_output", f"Local SVRF output {name} is not defined by the body", node)
+        program = ast.Program(statements=node.body)
+        nested = type(self)(self.filename, self.strict, table, annotate_expression_contexts(program))
+        nested._validate_statement_list(node.body, scope)
+        check_fmacro_enablement(nested)
+        check_macro_cycles(nested)
+        self.diagnostics.extend(nested.diagnostics)
 
     def _warn_conditional_symbol(self, kinds, name, node, scope, context="generic"):
         status = scope.availability(kinds, name)
@@ -71,7 +103,11 @@ class SemanticValidator(DirectiveValidationMixin, ValueValidationMixin):
         return True
 
     def _validate_macro_reference(self, name, node, scope, *, device=False):
-        if scope.knows_macro(name) or self._warn_conditional_symbol(("macros",), name, node, scope):
+        if scope.knows_macro(name):
+            check_macro_call(self, name, node, scope, device)
+            return
+        if self._warn_conditional_symbol(("macros",), name, node, scope):
+            check_macro_call(self, name, node, scope, device)
             return
         self.error(
             "semantic.device.undefined_cmacro" if device else "semantic.macro.undefined",

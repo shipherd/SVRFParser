@@ -191,6 +191,15 @@ class IfDef(AstNode):
         self.then_body = then_body or []
         self.else_body = else_body or []
 
+    @property
+    def directive(self):
+        return "#IFNDEF" if self.negated else "#IFDEF"
+
+
+class IfDefExp(IfDef):
+    __slots__ = ()
+    directive = "#IFDEF_EXP"
+
 
 class Include(AstNode):
     __slots__ = ("path", "embedded", "preprocessor")
@@ -227,15 +236,16 @@ class LayerDef(AstNode):
 
 
 class LayerMap(AstNode):
-    __slots__ = ("gds_num", "map_type", "type_num", "internal_num")
+    __slots__ = ("gds_num", "map_type", "type_num", "internal_num", "target_texttype")
 
     def __init__(self, gds_num=0, map_type="DATATYPE",
-                 type_num=0, internal_num=0, **kw):
+                 type_num=0, internal_num=0, target_texttype=None, **kw):
         super().__init__(**kw)
         self.gds_num = gds_num
         self.map_type = map_type
         self.type_num = type_num
         self.internal_num = internal_num
+        self.target_texttype = target_texttype
 
 
 class VariableDef(AstNode):
@@ -289,6 +299,21 @@ class DfmSpec(AstNode):
         self.variant = variant
         self.arguments = arguments or []
         self.body = body or []
+
+
+class LocalSvrf(AstNode):
+    __slots__ = ("name", "inputs", "outputs", "variables", "body", "wrapped", "center")
+
+    def __init__(self, name="", inputs=None, outputs=None, variables=None, body=None,
+                 wrapped=False, center=False, **kw):
+        super().__init__(**kw)
+        self.name = name
+        self.inputs = inputs or []
+        self.outputs = outputs or []
+        self.variables = variables or []
+        self.body = body or []
+        self.wrapped = wrapped
+        self.center = center
 
 
 class DfmClause(AstNode):
@@ -350,11 +375,13 @@ class Connect(AstNode):
 
 class Device(AstNode):
     __slots__ = ("device_type", "device_name", "seed_layer",
-                 "pins", "aux_layers", "cmacro", "cmacro_args")
+                 "pins", "aux_layers", "cmacro", "cmacro_args", "netlist_options",
+                 "connection_mode", "text_model_layer", "text_property_layers", "swap_lists", "signature", "template")
 
     def __init__(self, device_type=None, device_name=None,
                  seed_layer="", pins=None, aux_layers=None,
-                 cmacro=None, cmacro_args=None, **kw):
+                 cmacro=None, cmacro_args=None, netlist_options=None, connection_mode=None,
+                 text_model_layer=None, text_property_layers=None, swap_lists=None, signature=None, template=None, **kw):
         super().__init__(**kw)
         self.device_type = device_type
         self.device_name = device_name
@@ -363,6 +390,13 @@ class Device(AstNode):
         self.aux_layers = aux_layers or []
         self.cmacro = cmacro
         self.cmacro_args = cmacro_args or []
+        self.netlist_options = netlist_options or []
+        self.connection_mode = connection_mode
+        self.text_model_layer = text_model_layer
+        self.text_property_layers = text_property_layers or []
+        self.swap_lists = swap_lists or []
+        self.signature = signature
+        self.template = template
 
 
 class DMacro(AstNode):

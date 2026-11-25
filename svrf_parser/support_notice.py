@@ -34,8 +34,7 @@ SUPPORT_NOTICES = (
         feature_name="polygon_directive",
         warning_code="validation.support.limited_feature",
         message=(
-            "POLYGON directives are recognized, but only generic parsing and limited "
-            "semantic handling are implemented"
+            "POLYGON directives are checked for coordinate pairs, not evaluated against layout geometry"
         ),
         category="generic_semantics",
         emit_warning=True,
@@ -70,8 +69,7 @@ SUPPORT_NOTICES = (
         feature_name="encrypted_block",
         warning_code="validation.support.opaque_content",
         message=(
-            "Encrypted SVRF blocks are treated as opaque content; definitions inside "
-            "them are not available to semantic validation"
+            "Definitions in recognized plaintext are validated; opaque payloads cannot be inspected"
         ),
         category="opaque_content",
         emit_warning=False,

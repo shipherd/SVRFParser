@@ -247,13 +247,14 @@ class OperationExpressionParserMixin:
         del lbp, stop_tokens, stop_on_newline
         return self._parse_constraint_led(left, loc)
 
-    def _parse_with_led(self, left, loc, stop_tokens, stop_on_newline):
+    def _parse_with_led(self, left, loc, stop_tokens, stop_on_newline, *, negated=False):
         if self._is_text_selection_head():
             return self._parse_text_selection(left, loc, stop_tokens, stop_on_newline)
         self._advance()
-        op_parts = ["WITH"]
+        op_parts = ["NOT", "WITH"] if negated else ["WITH"]
         if self._cur().type == TT.IDENT and self._cur().value in _WITH_SECONDARY_OPS:
             op_parts.append(self._advance().value)
+        leading = self._parse_constraints() if op_parts[-1] == "EDGE" and self._cur().value in _COMPARISON_SYMBOLS else []
         right = None
         if (
             self._can_start_expression_token()
@@ -264,6 +265,8 @@ class OperationExpressionParserMixin:
             right = self._parse_expression(35, stop_tokens=stop_tokens, stop_on_newline=stop_on_newline)
         op_name = " ".join(op_parts)
         expr = ast.BinaryOp(op=op_name, left=left, right=right, **loc)
+        if leading:
+            return ast.ConstrainedExpr(expr=expr, constraints=leading, **loc)
         if self._cur().type == TT.SYMBOL and self._cur().value in _COMPARISON_SYMBOLS:
             return self._parse_constraint_led(expr, loc)
         if self._cur().type == TT.IDENT and self._cur().value in _MODIFIER_STARTERS:
@@ -345,6 +348,8 @@ class OperationExpressionParserMixin:
     def _parse_expand_or_convex_edge_led(self, left, token, loc):
         self._advance()
         self._advance()
+        if token.value == "EXPAND":
+            return self._parse_directional_geometry(token, "EXPAND EDGE", left=left)
         modifiers = self._parse_operation_modifiers()
         return normalize_operation_parts(
             f"{token.value} EDGE",

@@ -106,11 +106,16 @@ def _normalize_connect(clause_cst):
     via_layer = None
     link_name = None
     abut_also = False
-    for clause in clause_cst.body_clauses:
+    clauses = clause_cst.body_clauses
+    for i, clause in enumerate(clauses):
         values = tuple(getattr(clause, "values", ()))
         if isinstance(clause, OperandClause):
             layers.extend(str(value) for value in values)
         elif isinstance(clause, ModifierClause):
+            if values in {("BY",), ("LINK",)}:
+                # Quoted values are separate scalar clauses in the concrete tree.
+                if i+1 < len(clauses) and isinstance(clauses[i+1], ScalarClause):
+                    values += clauses[i+1].values
             if values[:1] == ("BY",) and len(values) > 1:
                 via_layer = str(values[1])
             elif values[:1] == ("LINK",) and len(values) > 1:
@@ -145,35 +150,42 @@ def _normalize_attach(clause_cst):
     return ast.Attach(layer=layer, net=net)
 
 
-def _normalize_device(clause_cst):
-    operands = []
-    modifiers = []
-    for clause in clause_cst.body_clauses:
-        values = tuple(getattr(clause, "values", ()))
-        if isinstance(clause, OperandClause):
-            operands.extend(values)
-        elif isinstance(clause, ModifierClause):
-            modifiers.append(values)
+def _signed_values(values):
+    index = 0
+    while index < len(values):
+        value = values[index]
+        index += 1
+        if value in ("+", "-") and index < len(values) and isinstance(values[index], (float, int)):
+            value = -values[index] if value == "-" else values[index]
+            index += 1
+        yield value
 
-    device_name = str(operands[0]) if operands else None
-    seed_layer = str(operands[1]) if len(operands) > 1 else ""
-    pins = [(str(value), None) for value in operands[2:]]
-    aux_layers = []
+
+def _normalize_device(clause_cst):
+    values = [v for clause in clause_cst.body_clauses for v in getattr(clause, "values", ())]
+    operands = []
     cmacro = None
     cmacro_args = []
-    for modifier in modifiers:
-        if modifier[:1] == ("CMACRO",) and len(modifier) > 1 and cmacro is None:
-            cmacro = str(modifier[1])
-            continue
-        cmacro_args.extend(str(value) for value in modifier)
+    netlist_options = []
+    idx = 0
+    while idx < len(values):
+        if values[idx] == "CMACRO" and idx + 1 < len(values):
+            cmacro = str(values[idx + 1])
+            idx += 2
+        elif values[idx] == "NETLIST" and idx + 2 < len(values) and values[idx + 1] in ("MODEL", "ELEMENT"):
+            netlist_options.append((values[idx + 1], str(values[idx + 2])))
+            idx += 3
+        else:
+            (operands if cmacro is None else cmacro_args).append(values[idx])
+            idx += 1
     return ast.Device(
         device_type=None,
-        device_name=device_name,
-        seed_layer=seed_layer,
-        pins=pins,
-        aux_layers=aux_layers,
+        device_name=str(operands[0]) if operands else None,
+        seed_layer=str(operands[1]) if len(operands) > 1 else "",
+        pins=[(str(value), None) for value in operands[2:]],
         cmacro=cmacro,
-        cmacro_args=cmacro_args,
+        cmacro_args=list(_signed_values(cmacro_args)),
+        netlist_options=netlist_options,
     )
 
 
@@ -183,7 +195,7 @@ def _normalize_macro_call(clause_cst):
     for clause in clause_cst.body_clauses:
         values.extend(getattr(clause, "values", ()))
     name = str(values[0]) if values else ""
-    arguments = [_value_to_ast(value) for value in values[1:]]
+    arguments = [_value_to_ast(value) for value in _signed_values(values[1:])]
     return ast.MacroCall(kind=kind, name=name, arguments=arguments)
 
 

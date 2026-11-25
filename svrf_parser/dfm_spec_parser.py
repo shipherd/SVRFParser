@@ -1,9 +1,12 @@
-"""Ordered, non-scoping DFM fill declarations and their continuation clauses."""
+"""DFM declarations, local SVRF bodies and ordered fill continuation clauses."""
 
 from __future__ import annotations
 
 from . import ast
-from .tokens import TokenType
+from .exceptions import LexerError, ParseError
+from .lexer import Lexer
+from .preprocessor_schema import CONDITIONAL_OPENERS
+from .tokens import Token, TokenType, rebase_tokens
 
 TT = TokenType
 
@@ -39,9 +42,122 @@ _MIN_ARGUMENTS.update({"STEP": 1, "DISPLACE": 2, "STRIPE": 1, "SPACEXY": 3, "SPA
 
 
 class DfmSpecParserMixin:
+    def _parse_dfm_spec_via(self):
+        start = self._cur()
+        self.pos += 3
+        name = self._parse_name()
+        clauses = []
+        for key in ("VIASHAPE", "ENC1", "ENC2"):
+            self._skip_newlines()
+            i = self.pos
+            token = self._expect(TT.IDENT, key)
+            self._skip_newlines()
+            args = []
+            for _ in range(2):
+                j = self._next_non_newline_index(self.pos)
+                t = self.tokens[j]
+                if not self._can_start_expression_token(t) or t.value in {"ENC1", "ENC2"} or self._starts_line_statement_at(j):
+                    break
+                self.pos = j
+                args.append(self._parse_expression(50, context="modifier"))
+            if not args:
+                raise ParseError(f"{key} requires one or two dimensions", token.line, token.col, token)
+            clauses.append(self._finish_node(ast.DfmClause(keywords=[key], arguments=args, **self._loc(token)), i))
+        return ast.DfmSpec(kind="VIA", name=name, body=clauses, **self._loc(start))
+
+    def _local_name(self):
+        token = self._cur()
+        if token.type not in (TT.IDENT, TT.STRING):
+            raise ParseError("Expected a local SVRF name", token.line, token.col, token)
+        self._advance()
+        return token.value
+
+    def _local_body(self):
+        opening = self._expect(TT.SYMBOL, "[")
+        start = self.pos
+        depth = 1
+        while depth and not self._at(TT.EOF):
+            if self._at_symbol("["):
+                depth += 1
+            elif self._at_symbol("]"):
+                depth -= 1
+                if not depth:
+                    break
+            self._advance()
+        closing = self._expect(TT.SYMBOL, "]")
+        raw = self.source_text[opening.end_offset:closing.offset]
+        stripped = raw.strip()
+        wrapped = stripped.startswith("/*") and stripped.find("*/", 2) == len(stripped)-2
+        if wrapped:
+            skip = len(raw)-len(raw.lstrip())+2
+            prefix = raw[:skip].replace("\r\n", "\n").replace("\r", "\n")
+            line = opening.end_line + prefix.count("\n")
+            col = len(prefix.rsplit("\n", 1)[-1])+1 if "\n" in prefix else opening.end_col+skip
+            try:
+                tokens = Lexer(stripped[2:-2], filename=self.filename).tokens()
+            except LexerError as exc:
+                raise LexerError(exc.message, line+exc.line-1, exc.col+(col-1 if exc.line == 1 else 0)) from exc
+            rebase_tokens(tokens, line, col, opening.end_offset+skip)
+        else:
+            eof = Token(TT.EOF, "", closing.line, closing.col, offset=closing.offset, end_offset=closing.offset)
+            tokens = [*self.tokens[start:self.pos-1], eof]
+        nested = type(self)(tokens, self.filename, self.source_text, self.strict)
+        body = nested.parse().statements
+        self.warnings.extend(nested.warnings)
+        return body, wrapped
+
+    def _parse_local_svrf(self):
+        start = self._cur()
+        self.pos += 3
+        name = self._parse_name()
+        self._skip_newlines()
+        self._expect(TT.SYMBOL, "(")
+        inputs, outputs, variables = [], [], []
+        self._skip_newlines()
+        while not self._at_symbol(":") or not inputs:
+            layer = self._local_name()
+            nodal = bool(self._match(TT.SYMBOL, "("))
+            if nodal:
+                self._expect(TT.IDENT, "NODAL")
+                self._expect(TT.SYMBOL, ")")
+            inputs.append((layer, nodal))
+            self._skip_newlines()
+        colon = self._advance()
+        if self.tokens[self.pos-2].end_offset == colon.offset or self._cur().offset == colon.end_offset:
+            raise ParseError("Local SVRF requires whitespace around ':'", colon.line, colon.col, colon)
+        self._skip_newlines()
+        while not self._at_symbol(")") or not outputs:
+            outputs.append(self._local_name())
+            self._skip_newlines()
+        self._advance()
+        self._skip_newlines()
+        if self._match(TT.IDENT, "VARIABLES"):
+            self._expect(TT.SYMBOL, "[")
+            self._skip_newlines()
+            while not self._at_symbol("]") or not variables:
+                key = self._local_name()
+                default = None
+                if self._match(TT.SYMBOL, "="):
+                    i = self.pos
+                    negative = bool(self._match(TT.SYMBOL, "-"))
+                    if not negative:
+                        self._match(TT.SYMBOL, "+")
+                    number = self._expect(TT.NUMBER)
+                    default = self._finish_node(ast.NumberLiteral(value=-number.value if negative else number.value), i)
+                variables.append((key, default))
+                self._skip_newlines()
+            self._advance()
+            self._skip_newlines()
+        body, wrapped = self._local_body()
+        j = self._next_non_newline_index(self.pos)
+        center = self.tokens[j].type == TT.IDENT and self.tokens[j].value == "CENTER" and not self._starts_line_statement_at(j)
+        if center:
+            self.pos = j+1
+        return ast.LocalSvrf(name, inputs, outputs, variables, body, wrapped, center, **self._loc(start))
+
     def _dfm_spec_continuation_after(self, statement, previous=False):
         if isinstance(statement, ast.DfmSpec):
-            return True
+            return statement.kind != "VIA"
         if isinstance(statement, (ast.DfmClause, ast.Define, ast.Include)):
             return previous
         if isinstance(statement, ast.IfDef):
@@ -115,7 +231,7 @@ class DfmSpecParserMixin:
             index = self._next_non_newline_index(index)
             token = self.tokens[index]
             if token.type == TT.PREPROCESSOR:
-                if token.value in {"#IFDEF", "#IFNDEF"}:
+                if token.value in CONDITIONAL_OPENERS:
                     depth += 1
                 elif token.value == "#ENDIF":
                     depth -= 1
@@ -139,7 +255,7 @@ class DfmSpecParserMixin:
     def _starts_dfm_fill_item(self, index, mode="dfm_fill"):
         token = self.tokens[index]
         if token.type == TT.PREPROCESSOR:
-            if token.value in {"#IFDEF", "#IFNDEF"}:
+            if token.value in CONDITIONAL_OPENERS:
                 return self._dfm_fill_conditional_is_continuation(index, mode)
             return token.value in {"#DEFINE", "#UNDEFINE", "#INCLUDE"}
         return bool(

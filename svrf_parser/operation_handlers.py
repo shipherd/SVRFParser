@@ -128,7 +128,7 @@ class OperationParserMixin(OperationExpressionParserMixin, OperationModifierPars
         schema = self._resolve_operation_schema(start_idx)
         start = self._expect(TT.IDENT)
         self.pos = max(self.pos, schema.end_idx)
-        op_name = schema.name
+        op_name = {"INTERNAL": "INT", "EXTERNAL": "EXT", "ENCLOSURE": "ENC"}.get(schema.name, schema.name)
         return self._parse_operation_from_schema(start, op_name, schema)
 
     def _parse_operation_from_schema(self, start, op_name, schema):
@@ -138,9 +138,79 @@ class OperationParserMixin(OperationExpressionParserMixin, OperationModifierPars
             "device_layer": self._parse_device_layer_operation,
             "dfm_rdb": self._parse_dfm_rdb_operation,
             "pathchk": self._parse_pathchk_operation,
+            "fixed_geometry": self._parse_fixed_geometry,
+            "directional_geometry": self._parse_directional_geometry,
         }
         handler = strategy_handlers.get(schema.parse_strategy, self._parse_default_operation)
         return handler(start, op_name, schema, modifier_starters)
+
+    def _parse_directional_geometry(self, start, op_name, schema=None, modifier_starters=None, *, left=None):
+        operands = [left] if left is not None else []
+        modifiers = []
+        expand = op_name == "EXPAND EDGE"
+        directions = ({"IN": "INSIDE", "OUT": "OUTSIDE", "INSIDE": "INSIDE", "OUTSIDE": "OUTSIDE", "EXTEND": "EXTEND"}
+                      if expand else {word: word for word in ("TOP", "BOTTOM", "LEFT", "RIGHT")})
+        while True:
+            i = self._next_non_newline_index(self.pos)
+            t = self.tokens[i]
+            j = self._next_non_newline_index(i+1) if t.type == TT.IDENT else i
+            if t.type == TT.IDENT and t.value in directions and self.tokens[j].value == "BY":
+                modifiers.append(directions[t.value])
+                self.pos = i = j
+                t = self.tokens[i]
+            if t.type == TT.IDENT and t.value == "BY":
+                self.pos = i+1
+                self._skip_newlines()
+                factor = expand and self._match(TT.IDENT, "FACTOR")
+                self._skip_newlines()
+                # Scalar context distinguishes 'distance (layer)' from a function call.
+                modifiers.append(("BY FACTOR" if factor else "BY", self._parse_expression(35, context="scalar")))
+            elif expand and t.type == TT.IDENT and t.value == "CORNER" and self.tokens[j].value == "FILL":
+                self.pos = j+1
+                modifiers.append("CORNER FILL")
+            elif op_name == "GROW" and t.type == TT.IDENT and t.value == "SEQUENTIAL":
+                self.pos = i+1
+                modifiers.append("SEQUENTIAL")
+            elif not operands and self._can_start_expression_token(t) and not self._starts_line_statement_at(i):
+                self.pos = i
+                operands.append(self._parse_expression(35, context="layer"))
+            else:
+                break
+        return ast.DRCOp(op=op_name, operands=operands, modifiers=modifiers, **self._loc(start))
+
+    def _parse_fixed_geometry(self, start, op_name, schema, modifier_starters):
+        del schema, modifier_starters
+        self._consume_rhs_newlines()
+        operands = [self._parse_expression(50)]
+        modifiers = []
+        self._consume_rhs_newlines()
+        if op_name == "MAGNIFY":
+            self._expect(TT.IDENT, "BY")
+            self._consume_rhs_newlines()
+            modifiers.append(("BY", self._parse_expression(50, context="scalar")))
+        else:
+            operands.append(self._parse_expression(50, context="layer" if op_name == "ORNET" else "scalar"))
+            if op_name == "SNAP" and self._at(TT.NEWLINE):
+                idx = self._next_non_newline_index(self.pos)
+                if self.tokens[idx].type == TT.NUMBER and not self._segmenter.starts_line_statement_at(idx):
+                    self.pos = idx
+            if op_name == "ORNET" and self._match(TT.IDENT, "BY"):
+                if not (self._at(TT.IDENT, "NET") or self._at(TT.IDENT, "SHAPE")):
+                    self._expect(TT.IDENT, "NET", "ORNET BY requires NET or SHAPE")
+                modifiers.append("BY " + self._advance().value)
+            elif op_name == "DEANGLE":
+                if self._match(TT.IDENT, "ALL"):
+                    modifiers.append("ALL")
+                elif self._match(TT.IDENT, "SKEW"):
+                    modifiers.append("SKEW")
+                    if self._match(TT.IDENT, "ORTHOGONAL"):
+                        self._expect(TT.IDENT, "ONLY")
+                        modifiers.extend(("ORTHOGONAL", "ONLY"))
+            elif (op_name == "SNAP" and self._can_start_expression_token()
+                  and not self._at_statement_boundary("rule", allow_same_line_statement=True)
+                  and not self._segmenter.starts_operation_at(self.pos)):
+                operands.append(self._parse_expression(50, context="scalar"))
+        return ast.DRCOp(op=op_name, operands=operands, modifiers=modifiers, **self._loc(start))
 
     def _parse_device_layer_operation(self, start, op_name, schema, modifier_starters):
         del schema, modifier_starters
@@ -216,6 +286,11 @@ class OperationParserMixin(OperationExpressionParserMixin, OperationModifierPars
         while True:
             token = self._cur()
             if token.type == TT.NEWLINE:
+                next_word = self.tokens[self._next_non_newline_index()].value
+                if (op_name.startswith("DFM DV ") and next_word in {"RDB", "DVPARAMS"}
+                        or op_name == "DFM DV OVERRIDE" and not operands and next_word in {"CMACRO", "FMACRO"}):
+                    self._skip_newlines()
+                    continue
                 if self._consume_operation_continuation_newlines():
                     continue
                 if schema.allow_nonstatement_expression_newline:
@@ -248,6 +323,7 @@ class OperationParserMixin(OperationExpressionParserMixin, OperationModifierPars
                         modifier_starters,
                         bracket_modifier_mode=schema.bracket_modifier_mode,
                         parenthesized_scalar_modifiers=schema.parenthesized_scalar_modifiers,
+                        dv_filenames=op_name.startswith("DFM DV "),
                     )
                 )
                 break
@@ -263,6 +339,7 @@ class OperationParserMixin(OperationExpressionParserMixin, OperationModifierPars
                     modifier_starters,
                     bracket_modifier_mode=schema.bracket_modifier_mode,
                     parenthesized_scalar_modifiers=schema.parenthesized_scalar_modifiers,
+                    dv_filenames=op_name.startswith("DFM DV "),
                 )
             )
 

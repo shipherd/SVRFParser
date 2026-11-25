@@ -67,6 +67,9 @@ class AstVisitor:
     def visit_IfDef(self, node):
         return self.generic_visit(node)
 
+    def visit_IfDefExp(self, node):
+        return self.visit_IfDef(node)
+
     def visit_Include(self, node):
         return self.generic_visit(node)
 
@@ -130,8 +133,7 @@ class AstVisitor:
 
 def _iter_children(node):
     """Yield all child attributes of an AST node that may contain sub-nodes."""
-    for slot in getattr(node, '__slots__', ()):
-        val = getattr(node, slot, None)
+    for _, val in node.iter_fields():
         if val is not None:
             yield val
 

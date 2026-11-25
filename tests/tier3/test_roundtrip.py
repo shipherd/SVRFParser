@@ -174,7 +174,7 @@ class TestMiscRoundtrip(RoundtripTestCase):
 
     def test_fmacro_syntax(self):
         self.assertRoundtrip('FMACRO EXTRACT(M1, 0.1)')
-        self.assertEqual('FMACRO EXTRACT(M1, 0.1)', printer.emit(parse('FMACRO EXTRACT(M1, 0.1)')))
+        self.assertEqual('FMACRO EXTRACT(M1 0.1)', printer.emit(parse('FMACRO EXTRACT(M1, 0.1)')))
 
     def test_embedded_include(self):
         self.assertRoundtrip('VARIABLE CELLS\nINCLUDE "cells.list"')

@@ -18,8 +18,8 @@ _TOKEN_RE = re.compile(
   | (?P<BLOCKCOMMENT>/\*.*?\*/)
   | (?P<PREPROCESSOR>\#[A-Za-z_][A-Za-z0-9_]*)
   | (?P<OPERATOR>==|!=|<=|>=|\|\||&&|::)
-  | (?P<SYMBOL>[{}\[\](),=<>+\-*/^%?:$~@!;.])
   | (?P<NUMBER>(?!\d+(?:[A-DF-Za-df-z_]|[Ee](?![+\-]?\d)))(?:\d+\.\d*|\.\d+|\d+)(?:[eE][+\-]?\d+)?)(?![A-Za-z_.])
+  | (?P<SYMBOL>[{}\[\](),=<>+\-*/^%?:$~@!;.])
   | (?P<IDENT>(?:[A-Za-z_][A-Za-z0-9_.]*|\d+[A-Za-z_][A-Za-z0-9_.]*)\??)
   | (?P<MISMATCH>.)
     """,
@@ -35,13 +35,46 @@ _ESCAPE_MAP = {
     "'": "'",
 }
 
+_REST_OF_LINE = re.compile(r"[^\r\n]*")
+_ENDCRYPT = re.compile(r"#ENDCRYPT(?![A-Z0-9_])", re.IGNORECASE | re.ASCII)
+_TVF_HEADER = re.compile(r"""TVF\s+FUNCTION\s+(?:(?:EDGE|ERROR)\s+)?(?:"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|[^\s\[\]{}]+)\s*(\[)\s*/\*""", re.I | re.ASCII)
+
+
+def tvf_body_span(text, start, end):
+    header = _TVF_HEADER.match(text, start, end)
+    if header is None:
+        return None
+    close = text.find("*/", header.end(), end)
+    if close >= 0:
+        close += 2
+        while close < end and text[close].isspace():
+            close += 1
+        if close < end and text[close] == "]":
+            return header.start(1), close + 1
+    return header.start(1), None
+
+
+_STRING_SPECIAL = {'"': re.compile(r'["\\\r\n]'), "'": re.compile(r"['\\\r\n]")}
+
+
+def encrypted_payload_end(text, start):
+    """Return the start of the closing directive's indentation, or EOF."""
+    for marker in _ENDCRYPT.finditer(text, start):
+        pos = marker.start()
+        while pos > start and text[pos - 1] in " \t":
+            pos -= 1
+        if pos == start or text[pos - 1] in "\r\n":
+            return pos
+    return len(text)
+
 
 class Lexer:
     """Tokenizer for SVRF source text."""
 
-    def __init__(self, text, filename="<input>"):
+    def __init__(self, text, filename="<input>", *, recover_invalid=False):
         self.text = text or ""
         self.filename = filename
+        self._recover_invalid = recover_invalid
         self.length = len(self.text)
         self.pos = 0
         self.line = 1
@@ -53,8 +86,19 @@ class Lexer:
         return self._tokens
 
     def _tokenize(self):
+        tvf = None
         while self.pos < self.length:
             ch = self.text[self.pos]
+            if tvf and self.pos == tvf[0]:
+                offset, end = tvf
+                if end is None:
+                    raise LexerError("Unterminated TVF function block", self.line, self.col)
+                line, col = self.line, self.col
+                raw = self.text[offset:end]
+                self._advance(raw)
+                self._append_token(TT.TVF_BODY, raw, line, col, offset, raw=raw)
+                tvf = None
+                continue
             if ch in ('"', "'"):
                 self._scan_string(ch)
                 continue
@@ -69,12 +113,14 @@ class Lexer:
             col = self.col
             start_offset = self.pos
 
-            if kind == "WHITESPACE":
+            if kind == "BLOCKCOMMENT":
                 self._advance(lexeme)
                 continue
 
+            self.pos = match.end()
             if kind == "NEWLINE":
-                self._advance(lexeme)
+                self.line += 1
+                self.col = 1
                 self._append_token(
                     TT.NEWLINE,
                     "\n",
@@ -85,13 +131,12 @@ class Lexer:
                 )
                 continue
 
-            if kind in ("LINECOMMENT", "BLOCKCOMMENT"):
-                self._advance(lexeme)
+            self.col += self.pos - start_offset
+            if kind in ("WHITESPACE", "LINECOMMENT"):
                 continue
 
             if kind == "PREPROCESSOR":
                 value = lexeme.upper()
-                self._advance(lexeme)
                 self._append_token(
                     TT.PREPROCESSOR,
                     value,
@@ -105,12 +150,10 @@ class Lexer:
                 continue
 
             if kind == "OPERATOR":
-                self._advance(lexeme)
                 self._append_token(TT.SYMBOL, lexeme, line, col, start_offset)
                 continue
 
             if kind == "SYMBOL":
-                self._advance(lexeme)
                 if lexeme == "@":
                     self._scan_rule_comment(line, col, start_offset)
                 else:
@@ -118,7 +161,6 @@ class Lexer:
                 continue
 
             if kind == "NUMBER":
-                self._advance(lexeme)
                 value = float(lexeme) if ("." in lexeme or "e" in lexeme.lower()) else int(lexeme)
                 self._append_token(
                     TT.NUMBER,
@@ -131,8 +173,9 @@ class Lexer:
                 continue
 
             if kind == "IDENT":
-                self._advance(lexeme)
                 value = lexeme.upper()
+                if value == "TVF":
+                    tvf = tvf_body_span(self.text, start_offset, self.length)
                 value = _KEYWORD_ALIASES.get(value, value)
                 self._append_token(
                     TT.IDENT,
@@ -144,10 +187,13 @@ class Lexer:
                 )
                 continue
 
+            if self._recover_invalid:
+                self._append_token(TT.INVALID, lexeme, line, col, start_offset)
+                continue
             raise LexerError(
                 f"Unexpected character {lexeme!r}",
-                self.line,
-                self.col,
+                line,
+                col,
             )
 
         self._tokens.append(
@@ -180,114 +226,57 @@ class Lexer:
         )
 
     def _advance(self, lexeme):
-        i = 0
-        while i < len(lexeme):
-            ch = lexeme[i]
-            self.pos += 1
-            if ch == "\r":
-                if i + 1 < len(lexeme) and lexeme[i + 1] == "\n":
-                    self.pos += 1
-                    i += 1
-                self.line += 1
-                self.col = 1
-            elif ch == "\n":
-                self.line += 1
-                self.col = 1
-            else:
-                self.col += 1
-            i += 1
+        length = len(lexeme)
+        self.pos += length
+        last_break = max(lexeme.rfind("\r"), lexeme.rfind("\n"))
+        if last_break < 0:
+            self.col += length
+            return
+        self.line += lexeme.count("\n")
+        if "\r" in lexeme:
+            self.line += lexeme.count("\r") - lexeme.count("\r\n")
+        self.col = length - last_break
 
     def _scan_string(self, quote):
         line = self.line
         col = self.col
         start_offset = self.pos
-        self.pos += 1
-        self.col += 1
-        chars = []
-
-        while self.pos < self.length:
-            ch = self.text[self.pos]
+        cursor = start_offset + 1
+        parts = []
+        special = _STRING_SPECIAL[quote]
+        while match := special.search(self.text, cursor):
+            end = match.start()
+            parts.append(self.text[cursor:end])
+            ch = match[0]
             if ch == quote:
-                self.pos += 1
-                self.col += 1
-                raw = quote + "".join(chars) + quote
-                self._tokens.append(
-                    Token(
-                        TT.STRING,
-                        self._unescape_string(chars),
-                        line,
-                        col,
-                        self.line,
-                        self.col,
-                        start_offset,
-                        self.pos,
-                        raw=raw,
-                    )
-                )
-                return
-            if ch in "\r\n":
-                raw = quote + "".join(chars)
-                self._tokens.append(
-                    Token(
-                        TT.STRING,
-                        self._unescape_string(chars),
-                        line,
-                        col,
-                        self.line,
-                        self.col,
-                        start_offset,
-                        self.pos,
-                        raw=raw,
-                    )
-                )
-                return
-            if ch == "\\" and self.pos + 1 < self.length:
-                chars.append(ch)
-                self.pos += 1
-                self.col += 1
-                ch = self.text[self.pos]
-            chars.append(ch)
-            self.pos += 1
-            self.col += 1
-
-        raw = quote + "".join(chars)
-        self._tokens.append(
-            Token(
-                TT.STRING,
-                self._unescape_string(chars),
-                line,
-                col,
-                self.line,
-                self.col,
-                start_offset,
-                self.pos,
-                raw=raw,
-            )
-        )
-
-    def _unescape_string(self, chars):
-        value = []
-        i = 0
-        while i < len(chars):
-            ch = chars[i]
-            if ch == "\\" and i + 1 < len(chars):
-                nxt = chars[i + 1]
-                value.append(_ESCAPE_MAP.get(nxt, nxt))
-                i += 2
-                continue
-            value.append(ch)
-            i += 1
-        return "".join(value)
+                end += 1
+                break
+            if ch != "\\":
+                break
+            if end + 1 == self.length:
+                parts.append("\\")
+                end += 1
+                break
+            escaped = self.text[end + 1]
+            cursor = end + 2
+            if escaped in "\r\n":
+                parts.append("\n")
+                if escaped == "\r" and self.text.startswith("\n", cursor):
+                    cursor += 1
+            else:
+                parts.append(_ESCAPE_MAP.get(escaped, escaped))
+        else:
+            parts.append(self.text[cursor:])
+            end = self.length
+        raw = self.text[start_offset:end]
+        self._advance(raw)
+        self._append_token(TT.STRING, "".join(parts), line, col, start_offset, raw=raw)
 
     def _scan_rule_comment(self, line, col, start_offset):
-        while self.pos < self.length and self.text[self.pos] in (" ", "\t"):
-            self.pos += 1
-            self.col += 1
-        start = self.pos
-        while self.pos < self.length and self.text[self.pos] not in "\r\n":
-            self.pos += 1
-            self.col += 1
-        text = self.text[start:self.pos].rstrip()
+        match = _REST_OF_LINE.match(self.text, self.pos)
+        text = match.group().lstrip(" \t").rstrip()
+        self.col += match.end() - self.pos
+        self.pos = match.end()
         self._tokens.append(
             Token(
                 TT.RULE_COMMENT,
@@ -303,57 +292,29 @@ class Lexer:
         )
 
     def _scan_encrypted_payload(self):
-        chunks = []
+        end = encrypted_payload_end(self.text, self.pos)
+        if self.pos == end:
+            return
+        if self.text.startswith("\r\n", self.pos):
+            self._advance("\r\n")
+        elif self.text[self.pos] in "\r\n":
+            self._advance(self.text[self.pos])
+
+        # Only the newline adjoining each directive belongs to the wrapper.
+        body_end = end
+        if end < self.length:
+            if self.text.endswith("\r\n", self.pos, end):
+                body_end -= 2
+            elif self.text.endswith(("\r", "\n"), self.pos, end):
+                body_end -= 1
+        payload = self.text[self.pos:body_end]
         start_line = self.line
         start_col = self.col
         start_offset = self.pos
-
-        while self.pos < self.length:
-            if not chunks and self.text[self.pos] in "\r\n":
-                line = self.text[self.pos]
-                if line == "\r" and self.pos + 1 < self.length and self.text[self.pos + 1] == "\n":
-                    line = "\r\n"
-                self._advance(line)
-                start_line = self.line
-                start_col = self.col
-                start_offset = self.pos
-                continue
-
-            line_start = self.pos
-            line_line = self.line
-            line_col = self.col
-            while self.pos < self.length and self.text[self.pos] not in "\r\n":
-                self.pos += 1
-                self.col += 1
-            line_text = self.text[line_start:self.pos]
-
-            if line_text.lstrip(" \t").upper().startswith("#ENDCRYPT"):
-                self.pos = line_start
-                self.line = line_line
-                self.col = line_col
-                break
-
-            chunks.append(line_text)
-
-            if self.pos < self.length and self.text[self.pos] in "\r\n":
-                newline = self.text[self.pos]
-                if newline == "\r" and self.pos + 1 < self.length and self.text[self.pos + 1] == "\n":
-                    newline = "\r\n"
-                self._advance(newline)
-                chunks.append("\n")
-
-        payload = "".join(chunks).rstrip("\n")
         if payload:
-            self._tokens.append(
-                Token(
-                    TT.ENCRYPTED,
-                    payload,
-                    start_line,
-                    start_col,
-                    self.line,
-                    self.col,
-                    start_offset,
-                    self.pos,
-                    raw=payload,
-                )
+            self._advance(payload)
+            self._append_token(
+                TT.ENCRYPTED, payload, start_line, start_col, start_offset, raw=payload,
             )
+        if body_end < end:
+            self._advance(self.text[body_end:end])

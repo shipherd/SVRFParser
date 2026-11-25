@@ -13,6 +13,7 @@ from .diagnostic_postprocess import (
     warn_limited_support_features,
 )
 from .include_resolver import expand_includes, parse_document
+from .source_map import read_source_text
 from .semantic_passes import (
     build_validation_profile,
     run_semantic_validation_pass,
@@ -47,6 +48,7 @@ def validate_svrf(
     unresolved_policy="strict",
     symbol_manifest=None,
     run_directory=None,
+    *, include_in_block_comments=True,
 ):
     """Validate whether *text* is a valid SVRF file."""
 
@@ -70,6 +72,7 @@ def validate_svrf(
     expansion = expand_includes(
         text or "", filename, run_directory=run_directory,
         follow_includes=follow_includes and (is_pathlike_filename(filename) or run_directory is not None),
+        include_in_block_comments=include_in_block_comments,
     )
     source_map = expansion.source_map
     root_doc, parse_errors = parse_document(source_map.text, filename=filename, strict=strict)
@@ -213,6 +216,7 @@ def is_valid_svrf(
     unresolved_policy="strict",
     symbol_manifest=None,
     run_directory=None,
+    *, include_in_block_comments=True,
 ):
     """Return ``True`` if *text* is a valid SVRF file, ``False`` otherwise."""
 
@@ -224,6 +228,7 @@ def is_valid_svrf(
         unresolved_policy=unresolved_policy,
         symbol_manifest=symbol_manifest,
         run_directory=run_directory,
+        include_in_block_comments=include_in_block_comments,
     ).valid
 
 
@@ -234,11 +239,12 @@ def is_valid_svrf_file(
     unresolved_policy="strict",
     symbol_manifest=None,
     run_directory=None,
+    *, include_in_block_comments=True,
 ):
     """Return ``True`` if the file at *path* is a valid SVRF file."""
 
     try:
-        text = Path(path).read_text(encoding="utf-8", errors="replace")
+        text = read_source_text(path)
     except OSError:
         return False
     return is_valid_svrf(
@@ -249,6 +255,7 @@ def is_valid_svrf_file(
         unresolved_policy=unresolved_policy,
         symbol_manifest=symbol_manifest,
         run_directory=run_directory,
+        include_in_block_comments=include_in_block_comments,
     )
 
 
@@ -259,6 +266,7 @@ def validate_svrf_file(
     unresolved_policy="strict",
     symbol_manifest=None,
     run_directory=None,
+    *, include_in_block_comments=True,
 ):
     """Validate the file at *path* and return a ``ValidationResult``."""
 
@@ -280,7 +288,7 @@ def validate_svrf_file(
             policy_summary=unresolved_policy_summary("strict"),
         )
     try:
-        text = path.read_text(encoding="utf-8", errors="replace")
+        text = read_source_text(path)
     except OSError as exc:
         return read_error_result(
             path,
@@ -295,4 +303,5 @@ def validate_svrf_file(
         unresolved_policy=normalized_policy,
         symbol_manifest=symbol_manifest,
         run_directory=run_directory,
+        include_in_block_comments=include_in_block_comments,
     )

@@ -151,9 +151,11 @@ def is_pathlike_filename(filename):
     return not (filename.startswith("<") and filename.endswith(">"))
 
 
-def expand_env_vars(value):
+def expand_env_vars(value, defaults=None):
     def replace(match):
         name = match.group(1) or match.group(2)
+        if defaults and name in defaults:
+            return defaults[name]
         return os.environ.get(name, match.group(0))
 
     return _ENV_VAR_RE.sub(replace, value)

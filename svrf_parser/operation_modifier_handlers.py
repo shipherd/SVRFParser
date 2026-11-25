@@ -58,12 +58,30 @@ class OperationModifierParserMixin:
     def _modifier_starters_for_operation(self, schema):
         return OPERATION_SCHEMA_REGISTRY.modifier_starters_for(schema)
 
+    def _parse_rdb_filename(self):
+        i = self.pos
+        token = self._cur()
+        if token.type == TT.STRING:
+            value = self._advance().value
+        elif (token.type in (TT.IDENT, TT.NUMBER) or token.value in {"$", "/", "."}) and token.value not in {
+                "OVERRIDE", "DVLAYER", "LOCALIZE", "NOPSEUDO", "MAXIMUM", "RDB"}:
+            self._advance()
+            while (self._cur().offset == self.tokens[self.pos-1].end_offset
+                   and self._cur().type not in (TT.EOF, TT.NEWLINE, TT.PREPROCESSOR)
+                   and self._cur().value not in {")", "]", "}", ","}):
+                self._advance()
+            value = "".join(str(t.raw) for t in self.tokens[i:self.pos])
+        else:
+            return "RDB"
+        return NamedModifier("RDB", self._finish_node(ast.StringLiteral(value=value), i))
+
     def _parse_operation_modifiers(
         self,
         modifier_starters=None,
         *,
         bracket_modifier_mode="scalar",
         parenthesized_scalar_modifiers=False,
+        dv_filenames=False,
     ):
         if modifier_starters is None:
             modifier_starters = _MODIFIER_STARTERS
@@ -76,6 +94,9 @@ class OperationModifierParserMixin:
                 break
             if token.type in (TT.EOF, TT.PREPROCESSOR, TT.RULE_COMMENT):
                 break
+            if dv_filenames and self._match(TT.IDENT, "RDB"):
+                modifiers.append(self._parse_rdb_filename())
+                continue
             if (
                 token.type == TT.IDENT
                 and token.value == "EXTENTS"

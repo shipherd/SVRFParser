@@ -2,8 +2,9 @@
 
 import unittest
 
-from svrf_parser import parse, parse_with_diagnostics
+from svrf_parser import Lexer, parse, parse_with_diagnostics
 from svrf_parser import ast
+from svrf_parser.exceptions import ParseError
 
 
 class TestManualExamples(unittest.TestCase):
@@ -189,6 +190,26 @@ class TestManualExamples(unittest.TestCase):
         self.assertEqual(tree.statements[0].values[0].value, 1e7)
         self.assertEqual(tree.statements[1].values[0].value, 5e-06)
 
+    def test_leading_decimal_point_in_scalar_and_rule_constraint(self):
+        text = "VARIABLE DELTA -.375E-1\nCHECK.2 { INT M1 < .25 }\n"
+        variable, rule = parse(text, strict=True).statements
+        self.assertEqual(-0.0375, variable.values[0].value)
+        self.assertEqual("CHECK.2", rule.name)
+        limit = rule.body[0].constraints[0].value
+        self.assertEqual(0.25, limit.value)
+        self.assertEqual(".25", text[limit.start_offset:limit.end_offset])
+
+    def test_escaped_physical_newline_in_quoted_string(self):
+        for nl in ("\n", "\r\n", "\r"):
+            for quote in ('"', "'"):
+                with self.subTest(newline=repr(nl), quote=quote):
+                    raw = quote + "first\\" + nl + "second" + quote
+                    source = raw + nl + "NEXT"
+                    string, _, following, _ = Lexer(source).tokens()
+                    self.assertEqual(("first\nsecond", raw), (string.value, string.raw))
+                    self.assertEqual((2, 8, len(raw)), (string.end_line, string.end_col, string.end_offset))
+                    self.assertEqual((3, 1, len(raw + nl)), (following.line, following.col, following.offset))
+
     def test_digit_prefixed_assignment(self):
         tree = parse("15V_GATE = M1 AND M2")
         node = tree.statements[0]
@@ -231,6 +252,35 @@ class TestManualExamples(unittest.TestCase):
         self.assertEqual(node.content.strip(), "abc123")
         self.assertEqual(node.body, [])
         self.assertEqual(node.parse_status, "opaque")
+
+    def test_encrypted_body_preserves_internal_newlines_and_source_spans(self):
+        for nl in ("\r\n", "\r", "\n"):
+            with self.subTest(newline=repr(nl)):
+                content = nl.join(("", "LAYER M1 1", "OUT_A = COPY M1", ""))
+                text = "#ENCRYPT" + nl + content + nl + "  #endcrypt" + nl
+                block = parse(text, strict=True).statements[0]
+                self.assertEqual(content, block.content)
+                self.assertEqual("plaintext", block.parse_status)
+                for line, node in enumerate(block.body, start=3):
+                    self.assertEqual((line, 1), (node.line, node.col))
+                    self.assertEqual(text[node.start_offset:node.end_offset], node.source_text)
+                self.assertEqual("OUT_A = COPY M1", block.body[1].source_text)
+
+    def test_similar_directive_and_inline_marker_stay_in_opaque_payload(self):
+        content = "#ENDCRYPT_LABEL\n|opaque #ENDCRYPT text|"
+        text = "#DECRYPT\n" + content + "\n\t#eNdCrYpT // done\nLAYER M1 1"
+        block, layer = parse(text, strict=True).statements
+        self.assertEqual(("opaque", content), (block.parse_status, block.content))
+        self.assertEqual(("M1", 5), (layer.name, layer.line))
+
+    def test_missing_endcrypt_reports_the_opening_marker(self):
+        text = "LAYER M1 1\r\n  #DECRYPT\r\nopaque"
+        program, warnings = parse_with_diagnostics(text)
+        self.assertIsInstance(program.statements[-1], ast.EncryptedBlock)
+        self.assertEqual(["parser.encrypted.unterminated"], [d.code for d in warnings])
+        self.assertEqual((2, 3, "#DECRYPT"), (warnings[0].line, warnings[0].col, warnings[0].snippet))
+        with self.assertRaises(ParseError):
+            parse(text, strict=True)
 
     def test_prefix_edge_binary(self):
         tree = parse("_T = IN EDGE M1 M2")
@@ -585,30 +635,19 @@ class TestManualExamples(unittest.TestCase):
         self.assertEqual(tree.statements[1].seed_layer, "M2")
         self.assertEqual(tree.statements[1].pins, [("P2", None)])
 
-    def test_device_cmacro_args_extend_to_statement_end(self):
+    def test_device_cmacro_stops_at_netlist_element(self):
         text = (
-            "DEVICE R(rnwsti_2t_ckt) RES_RNWSTI_2T nwell(POS) nwell(NEG) "
-            "CMACRO MEASURE_RESISTOR RES_RNWSTI_2T nwell rsh_rnwst dw_rnwst dl_rnwst NETLIST ELEMENT X\n"
+            "DEVICE R(sample) BODY PIN1(POS) PIN2(NEG) "
+            "CMACRO MEASURE BODY BASE SHEET WIDTH LENGTH NETLIST ELEMENT X\n"
         )
         tree, warnings = parse_with_diagnostics(text)
         self.assertEqual(warnings, [])
         self.assertEqual(len(tree.statements), 1)
         node = tree.statements[0]
         self.assertIsInstance(node, ast.Device)
-        self.assertEqual(node.cmacro, "MEASURE_RESISTOR")
-        self.assertEqual(
-            node.cmacro_args,
-            [
-                "RES_RNWSTI_2T",
-                "NWELL",
-                "RSH_RNWST",
-                "DW_RNWST",
-                "DL_RNWST",
-                "NETLIST",
-                "ELEMENT",
-                "X",
-            ],
-        )
+        self.assertEqual(node.cmacro, "MEASURE")
+        self.assertEqual(node.cmacro_args, ["BODY", "BASE", "SHEET", "WIDTH", "LENGTH"])
+        self.assertEqual(node.netlist_options, [("ELEMENT", "X")])
 
     def test_directive_same_line_statement_boundary(self):
         text = "LVS IGNORE PORTS YES DRC INCREMENTAL CONNECT NO\n"

@@ -1,5 +1,7 @@
 {
   "entries": [
+    {"name": "layer_resolution", "head_prefix": ["LAYER", "RESOLUTION"], "modes": ["top", "macro"], "parser_method": "_parse_fixed_specification"},
+    {"name": "snap_offgrid", "head_prefix": ["SNAP", "OFFGRID"], "modes": ["top", "macro"], "parser_method": "_parse_fixed_specification"},
     {
       "head_prefix": [
         "DFM",
@@ -277,7 +279,7 @@
       ],
       "name": "polygon_directive",
       "parse_kinds": [],
-      "parser_method": "_parse_directive"
+      "parser_method": "_parse_fixed_specification"
     },
     {
       "head_prefix": [

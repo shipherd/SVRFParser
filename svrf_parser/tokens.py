@@ -10,9 +10,23 @@ class TokenType(Enum):
     SYMBOL = auto()
     PREPROCESSOR = auto()
     ENCRYPTED = auto()
+    TVF_BODY = auto()
     RULE_COMMENT = auto()
+    INVALID = auto()
     NEWLINE = auto()
     EOF = auto()
+
+
+def rebase_tokens(tokens, line, col, offset):
+    for token in tokens:
+        if token.line == 1:
+            token.col += col - 1
+        if token.end_line == 1:
+            token.end_col += col - 1
+        token.line += line - 1
+        token.end_line += line - 1
+        token.offset += offset
+        token.end_offset += offset
 
 
 class Token:

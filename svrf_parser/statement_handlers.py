@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from . import ast
 from .exceptions import ParseError
 from .dfm_spec_parser import DfmSpecParserMixin, _DFM_MODES
 from .perc_parser import PercParserMixin
@@ -98,6 +99,23 @@ class StatementParserMixin(StatementShapeParserMixin, DfmSpecParserMixin, PercPa
         return NO_UNIT_DISPATCH
 
     def _parse_statement(self, mode):
+        if self._at(TT.IDENT, "DFM") and self._peek().value == "SPEC":
+            kind = self.tokens[self.pos+2].value
+            if kind in {"VIA", "SVRF"}:
+                return self._parse_dfm_spec_via() if kind == "VIA" else self._parse_local_svrf()
+        if self._at(TT.IDENT, "TVF") and self._peek_non_newline().value == "FUNCTION":
+            start = self._advance()
+            self._skip_newlines()
+            self._expect(TT.IDENT, "FUNCTION")
+            self._skip_newlines()
+            args = []
+            if self._at(TT.IDENT, "EDGE") or self._at(TT.IDENT, "ERROR"):
+                args.append(self._advance().value)
+                self._skip_newlines()
+            args.append(self._parse_name(preserve_case=True))
+            self._skip_newlines()
+            args.append(self._expect(TT.TVF_BODY, message="Expected [/* TVF script */]").raw)
+            return ast.Directive(keywords=["TVF", "FUNCTION"], arguments=args, **self._loc(start))
         if mode == "perc_load":
             return self._parse_perc_load_item()
         if mode in _DFM_MODES:

@@ -2,17 +2,18 @@
 
 from __future__ import annotations
 
+import os
 import re
 from dataclasses import dataclass
 from pathlib import Path
 
 from . import ast
 from .exceptions import LexerError, ParseError
-from .lexer import Lexer
+from .lexer import Lexer, encrypted_payload_end, tvf_body_span
 from .include_syntax import EMBEDDED_INCLUDE_HEADS
 from .parser import Parser, SVRFParseError
-from .source_map import SourceFile, SourceMap
-from .svrf_constructs import count_svrf_constructs
+from .preprocessor_schema import CONDITIONAL_OPENERS, pragma_arguments
+from .source_map import SourceFile, SourceMap, read_source_text
 from .tokens import TokenType
 from .validation_common import (
     ParsedDocument,
@@ -105,12 +106,12 @@ def parse_document(text, filename, strict=False):
     )
 
 
-def resolve_include_path(include_node, current_filename, run_directory=None):
+def resolve_include_path(include_node, current_filename, run_directory=None, defaults=None):
     raw = (include_node.path or "").strip()
     if not raw:
         return None, []
 
-    expanded = expand_env_vars(raw)
+    expanded = expand_env_vars(raw, defaults)
     if "$" in expanded:
         return None, [
             make_diagnostic(
@@ -161,38 +162,84 @@ def resolve_include_path(include_node, current_filename, run_directory=None):
     return str(resolved), []
 
 
-_INCLUDE_LINE = re.compile(
-    r"(?:^|(?<=\r))[ \t]*(?P<head>#?INCLUDE)\b(?P<args>[^\r\n]*)(?:\r\n|\r|\n|$)",
-    re.IGNORECASE | re.MULTILINE,
+_LINE_START = r"(?:^|(?<=\r))[ \t]*"
+_EVENT = _LINE_START + r"(?P<head>#?INCLUDE|#PRAGMA|#IFDEF_EXP|#IFN?DEF|#ELSE|#ENDIF)\b"
+_FLAGS = re.IGNORECASE | re.MULTILINE | re.ASCII
+_POSSIBLE_EVENT = re.compile(_EVENT, _FLAGS)
+_INCLUDE_OR_PRAGMA = re.compile(_LINE_START + r"(?:#?INCLUDE|#PRAGMA)\b", _FLAGS)
+_INCLUDE_LINE = re.compile(_LINE_START + r"(?P<head>#?INCLUDE)\b(?P<args>[^\r\n]*)(?:\r\n|[\r\n]|$)", _FLAGS)
+_SOURCE_EVENT = re.compile(
+    _EVENT + r"(?P<args>[^\r\n]*)(?:\r\n|[\r\n]|$)"
+    + r"|(?P<crypt>#(?:ENCRYPT|DECRYPT))\b"
+    + r"|(?P<tvf>\bTVF\b)"
+    + r"""|//[^\r\n]*|@[^\r\n]*|(?P<comment>/\*[\s\S]*?(?:\*/|\Z))"""
+    + r"""|"(?:[^"\\\r\n]|\\(?:\r\n|[\s\S]))*"?|'(?:[^'\\\r\n]|\\(?:\r\n|[\s\S]))*'?""",
+    _FLAGS,
 )
-_CRYPT_BLOCK = re.compile(
-    r"(?:^|(?<=\r))[ \t]*#(?:ENCRYPT|DECRYPT)\b(?P<body>.*?)"
-    r"(?=(?:^|(?<=\r))[ \t]*#ENDCRYPT\b|\Z)",
-    re.IGNORECASE | re.MULTILINE | re.DOTALL,
-)
 
 
-def _opaque_ranges(text, filename):
-    ranges = []
-    for match in _CRYPT_BLOCK.finditer(text):
-        body = match.group("body")
-        try:
-            parser = Parser(Lexer(body, filename=filename).tokens(), filename=filename, source_text=body)
-            program = parser.parse()
-            plaintext = not parser.warnings and count_svrf_constructs(program.statements) > 0
-        except Exception:
-            plaintext = False
-        if not plaintext:
-            ranges.append((match.start("body"), match.end("body")))
-    return ranges
+def _source_events(source, start, end, include_in_block_comments):
+    text = source.text
+    if not _POSSIBLE_EVENT.search(text, start, end):
+        return
+    while match := _SOURCE_EVENT.search(text, start, end):
+        start = match.end()
+        if match.group("tvf"):
+            span = tvf_body_span(text, match.start(), end)
+            if span:
+                start = span[1] or end
+        elif match.group("crypt"):
+            close = min(end, encrypted_payload_end(text, start))
+            if (_INCLUDE_OR_PRAGMA.search(text, start, close)
+                    and Parser.parse_plaintext_payload(text[start:close], source.filename)):
+                yield from _source_events(source, start, close, include_in_block_comments)
+            start = close
+        elif match.start("comment") >= 0 and include_in_block_comments:
+            # Calibre expands standalone INCLUDE lines before removing block comments.
+            for include in _INCLUDE_LINE.finditer(text, match.start(), match.end()):
+                yield include, True
+        elif match.group("head"):
+            yield match, False
+            start = match.end("head")
 
 
-def _is_embedded_include(text, match):
+class _IncludeEnvironment:
+    """Defaults live in expanded source order, never in the process environment."""
+
+    def __init__(self):
+        self.defaults = {}
+        self.branches = []
+
+    def observe(self, head, args):
+        if head in CONDITIONAL_OPENERS:
+            self.branches.append((self.defaults.copy(), None))
+        elif head == "#ELSE" and self.branches:
+            original, _ = self.branches[-1]
+            self.branches[-1] = (original, self.defaults)
+            self.defaults = original.copy()
+        elif head == "#ENDIF" and self.branches:
+            original, other = self.branches.pop()
+            other = original if other is None else other
+            self.defaults = {k: v for k, v in self.defaults.items() if other.get(k) == v}
+        elif head == "#PRAGMA":
+            try:
+                parts = pragma_arguments(Lexer(args).tokens())
+            except LexerError:
+                return
+            if len(parts) == 3 and parts[0].upper() in {"ENV", "DEFENV"} and "$" not in parts[2]:
+                kind, name, value = parts
+                actual = os.environ.get(name)
+                if actual is None or (kind.upper() == "DEFENV" and not actual):
+                    self.defaults[name] = value
+
+
+def _is_embedded_include(source, match):
     if match.group("head").startswith("#"):
         return False
-    previous_lines = text[:match.start()].splitlines()
-    for line in reversed(previous_lines):
-        if not line.strip() or line.lstrip().startswith("//"):
+    line_no, _ = source.position(match.start())
+    for index in range(line_no - 2, -1, -1):
+        line = source.text[source.line_starts[index]:source.line_starts[index + 1]].strip()
+        if not line or line.startswith("//"):
             continue
         try:
             tokens = [token for token in Lexer(line).tokens() if token.type != TokenType.EOF]
@@ -206,11 +253,14 @@ def _is_embedded_include(text, match):
     return False
 
 
-def _include_events(source):
-    opaque = _opaque_ranges(source.text, source.filename)
-    return [match for match in _INCLUDE_LINE.finditer(source.text)
-            if not any(start <= match.start() < end for start, end in opaque)
-            and not _is_embedded_include(source.text, match)]
+def _include_events(source, environment, include_in_block_comments, commented):
+    for match, in_comment in _source_events(source, 0, len(source.text), include_in_block_comments):
+        head = match.group("head").upper()
+        if head not in {"INCLUDE", "#INCLUDE"}:
+            if not commented:
+                environment.observe(head, match.group("args"))
+        elif not _is_embedded_include(source, match):
+            yield match, commented or in_comment
 
 
 def _include_node(source, match):
@@ -243,7 +293,7 @@ class IncludeExpansion:
     diagnostics: list
 
 
-def expand_includes(text, filename, *, run_directory=None, follow_includes=True):
+def expand_includes(text, filename, *, run_directory=None, follow_includes=True, include_in_block_comments=True):
     """Insert standalone includes iteratively, including syntax fragments."""
     run_directory = Path(run_directory).resolve() if run_directory is not None else Path.cwd()
     root = SourceFile(filename, text)
@@ -251,13 +301,16 @@ def expand_includes(text, filename, *, run_directory=None, follow_includes=True)
     source_map = SourceMap()
     diagnostics = []
     occurrence = 0
+    environment = _IncludeEnvironment()
+    if follow_includes and not _INCLUDE_LINE.search(text):
+        follow_includes = False
 
-    def frame(source, include_stack, paths):
+    def frame(source, include_stack, paths, commented=False):
         nonlocal occurrence
         occurrence += 1
         return {
             "source": source,
-            "events": iter(_include_events(source) if follow_includes else ()),
+            "events": iter(_include_events(source, environment, include_in_block_comments, commented) if follow_includes else ()),
             "cursor": 0, "include_stack": include_stack, "paths": paths,
             "occurrence": occurrence,
         }
@@ -267,7 +320,7 @@ def expand_includes(text, filename, *, run_directory=None, follow_includes=True)
     while pending:
         current = pending[-1]
         source = current["source"]
-        match = next(current["events"], None)
+        match, commented = next(current["events"], (None, False))
         end = match.start() if match is not None else len(source.text)
         source_map.append(
             source.text[current["cursor"]:end], source, current["cursor"],
@@ -289,7 +342,7 @@ def expand_includes(text, filename, *, run_directory=None, follow_includes=True)
                 snippet=match.group(), include_stack=current["include_stack"],
             ))
             continue
-        resolved, include_diags = resolve_include_path(include, source.filename, run_directory)
+        resolved, include_diags = resolve_include_path(include, source.filename, run_directory, environment.defaults)
         diagnostics.extend(with_include_stack(diag, current["include_stack"]) for diag in include_diags)
         if not resolved:
             continue
@@ -305,7 +358,7 @@ def expand_includes(text, filename, *, run_directory=None, follow_includes=True)
         child = sources.get(resolved)
         if child is None:
             try:
-                child = SourceFile(resolved, Path(resolved).read_text(encoding="utf-8", errors="replace"))
+                child = SourceFile(resolved, read_source_text(resolved))
             except OSError as exc:
                 diagnostics.append(make_diagnostic(
                     SEVERITY_ERROR, "validation.read_error", f"Cannot read file: {exc}",
@@ -313,6 +366,6 @@ def expand_includes(text, filename, *, run_directory=None, follow_includes=True)
                 ))
                 continue
             sources[resolved] = child
-        pending.append(frame(child, child_stack, (*current["paths"], Path(resolved))))
+        pending.append(frame(child, child_stack, (*current["paths"], Path(resolved)), commented))
     source_map.finish()
     return IncludeExpansion(source_map, sources, diagnostics)

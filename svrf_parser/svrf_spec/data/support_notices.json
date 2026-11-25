@@ -4,7 +4,7 @@
       "category": "generic_semantics",
       "emit_warning": true,
       "feature_name": "polygon_directive",
-      "message": "POLYGON directives are recognized, but only generic parsing and limited semantic handling are implemented",
+      "message": "POLYGON directives are checked for coordinate pairs, not evaluated against layout geometry",
       "name": "polygon_directive",
       "tags": [
         "generic_semantics",
@@ -40,7 +40,7 @@
       "category": "opaque_content",
       "emit_warning": false,
       "feature_name": "encrypted_block",
-      "message": "Encrypted SVRF blocks are treated as opaque content; definitions inside them are not available to semantic validation",
+      "message": "Definitions in recognized plaintext are validated; opaque payloads cannot be inspected",
       "name": "encrypted_block",
       "tags": [
         "manual_review",

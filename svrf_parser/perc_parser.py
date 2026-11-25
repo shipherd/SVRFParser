@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from . import ast
+from .preprocessor_schema import CONDITIONAL_OPENERS
 from .tokens import TokenType
 
 TT = TokenType
@@ -31,7 +32,7 @@ class PercParserMixin:
             index = self._next_non_newline_index(index)
             token = self.tokens[index]
             if token.type == TT.PREPROCESSOR:
-                if token.value in {"#IFDEF", "#IFNDEF"}:
+                if token.value in CONDITIONAL_OPENERS:
                     depth += 1
                 elif token.value == "#ENDIF":
                     depth -= 1
@@ -59,7 +60,7 @@ class PercParserMixin:
     def _starts_perc_load_item(self, index):
         token = self.tokens[index]
         if token.type == TT.PREPROCESSOR:
-            return token.value in {"#IFDEF", "#IFNDEF"} and self._perc_conditional_is_continuation(index)
+            return token.value in CONDITIONAL_OPENERS and self._perc_conditional_is_continuation(index)
         return self._perc_name_starts_at(index)
 
     def _parse_perc_name(self):

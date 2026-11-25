@@ -54,8 +54,12 @@ class SvrfPrinter:
         return f"#DEFINE {node.name}"
 
     def _emit_IfDef(self, node):
-        tag = "#IFNDEF" if node.negated else "#IFDEF"
-        parts = [f"{tag} {node.name}"]
+        if node.name.startswith("$"):
+            env = node.name[1:]
+            name = "$" + (env if re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", env) else self._quote(env))
+        else:
+            name = self._name(node.name)
+        parts = [f"{node.directive} {name}"]
         if node.value:
             parts[0] += f" {node.value}"
         for s in node.then_body:
@@ -66,6 +70,8 @@ class SvrfPrinter:
                 parts.append(self.emit(s))
         parts.append("#ENDIF")
         return '\n'.join(parts)
+
+    _emit_IfDefExp = _emit_IfDef
 
     def _emit_Include(self, node):
         keyword = "#INCLUDE" if getattr(node, "preprocessor", False) else "INCLUDE"
@@ -78,11 +84,14 @@ class SvrfPrinter:
 
     def _emit_LayerDef(self, node):
         nums = ' '.join(str(n) for n in node.numbers)
-        return f"LAYER {self._name(node.name)} {nums}"
+        name = self._quote(node.name) if node.name in {"MAP", "RESOLUTION"} else self._name(node.name)
+        return f"LAYER {name} {nums}"
 
     def _emit_LayerMap(self, node):
-        return (f"LAYER MAP {node.gds_num} {node.map_type} "
-                f"{node.type_num} {node.internal_num}")
+        def selector(value):
+            return ' '.join(self.emit(c) for c in value) if isinstance(value, list) else str(value)
+        text = f"LAYER MAP {selector(node.gds_num)} {node.map_type} {selector(node.type_num)} {node.internal_num}"
+        return text if node.target_texttype is None else f"{text} {node.target_texttype}"
 
     def _emit_VariableDef(self, node):
         values = "ENVIRONMENT" if node.environment else ' '.join(self.emit(value) for value in node.values)
@@ -98,6 +107,16 @@ class SvrfPrinter:
         parts.extend(self.emit(argument) for argument in node.arguments)
         return '\n'.join([' '.join(parts)] + [self.emit(clause) for clause in node.body])
 
+    def _emit_LocalSvrf(self, node):
+        inputs = ' '.join(self._name(name) + ("(NODAL)" if nodal else "") for name, nodal in node.inputs)
+        outputs = ' '.join(map(self._name, node.outputs))
+        header = f"DFM SPEC SVRF {self._name(node.name)} ({inputs} : {outputs})"
+        if node.variables:
+            defaults = (self._name(key) + (" = " + self.emit(v) if v is not None else "") for key, v in node.variables)
+            header += " VARIABLES [" + " ".join(defaults) + "]"
+        return '\n'.join([header + (" [/*" if node.wrapped else " ["), *(self.emit(s) for s in node.body),
+                          ("*/]" if node.wrapped else "]") + (" CENTER" if node.center else "")])
+
     def _emit_DfmClause(self, node):
         return ' '.join(list(node.keywords) + [self.emit(argument) for argument in node.arguments])
 
@@ -112,6 +131,12 @@ class SvrfPrinter:
 
     def _emit_Directive(self, node):
         parts = list(node.keywords)
+        if parts == ["TVF", "FUNCTION"] and node.arguments:
+            name = node.arguments[-2]
+            return " ".join([*parts, *node.arguments[:-2], self._quote(name) if name in {"EDGE", "ERROR"} else self._name(name),
+                             node.arguments[-1]])
+        if parts[:1] == ["#PRAGMA"]:
+            return " ".join([*parts, *(self._quote(arg) for arg in node.arguments)])
         is_description = (node.keywords == ['@'])
         for a in node.arguments:
             if isinstance(a, ast.Include) and a.embedded:
@@ -181,23 +206,49 @@ class SvrfPrinter:
         parts = ["DEVICE"]
         if node.device_type:
             if node.device_name:
-                parts.append(f"{node.device_type}({node.device_name})")
+                parts.append(f"{self._name(node.device_type)}({self._name(node.device_name)})")
             else:
-                parts.append(node.device_type)
+                parts.append(self._name(node.device_type))
+        elif node.device_name:
+            parts.append(self._name(node.device_name))
         if node.seed_layer:
-            parts.append(node.seed_layer)
+            parts.append(self._name(node.seed_layer))
         for pin in node.pins:
             if isinstance(pin, tuple) and len(pin) == 2:
-                parts.append(f"{pin[0]}({pin[1]})")
+                name = self._name(pin[0])
+                parts.append(f"{name}({self._name(pin[1])})" if pin[1] is not None else name)
             else:
                 parts.append(str(pin))
-        for aux in node.aux_layers:
-            parts.append(str(aux))
+        aux = iter(node.aux_layers)
+        tail = []
+        for layer in aux:
+            if layer.startswith("["):
+                tail = [layer, *aux]
+                break
+            parts.append(f"<{self._name(layer)}>")
+        for group in node.swap_lists:
+            pins = ("[" + " ".join(map(self._name, g)) + "]" for g in group) if isinstance(group[0], list) else map(self._name, group)
+            parts.append("(" + " ".join(pins) + ")")
+        if node.connection_mode:
+            parts.extend(("BY", node.connection_mode))
         if node.cmacro:
             parts.append("CMACRO")
             parts.append(node.cmacro)
             for a in node.cmacro_args:
-                parts.append(str(a))
+                parts.append(self._operand(a) if isinstance(a, ast.AstNode) else str(a))
+        for kind, name in node.netlist_options:
+            parts.extend(("NETLIST", kind, self._name(name)))
+        if node.text_model_layer:
+            parts.extend(("TEXT MODEL LAYER", self._name(node.text_model_layer)))
+        if node.text_property_layers:
+            parts.append("TEXT PROPERTY LAYER")
+            parts.extend(map(self._name, node.text_property_layers))
+        if node.signature:
+            key, layers = node.signature
+            parts.extend(("SIGNATURE", "?" if key is None else self._quote(key), *map(self._name, layers)))
+        if node.template:
+            parts.extend(("TEMPLATE", self._name(node.template)))
+        parts.extend(layer if layer.startswith("[") else f"<{self._name(layer)}>" for layer in tail)
         return ' '.join(parts)
 
     # ---- DMacro ----
@@ -215,16 +266,10 @@ class SvrfPrinter:
         return '\n'.join(parts)
 
     def _emit_MacroCall(self, node):
+        args = ' '.join(self._operand(a) if isinstance(a, ast.AstNode) else str(a) for a in node.arguments)
         if node.kind == "FMACRO":
-            args = ', '.join(self.emit(arg) if isinstance(arg, ast.AstNode) else str(arg) for arg in node.arguments)
             return f"FMACRO {self._name(node.name)}({args})"
-        parts = [node.kind, self._name(node.name)]
-        for arg in node.arguments:
-            if isinstance(arg, ast.AstNode):
-                parts.append(self.emit(arg))
-            else:
-                parts.append(str(arg))
-        return ' '.join(parts)
+        return f"{node.kind} {self._name(node.name)} {args}".rstrip()
 
     # ---- Property Block ----
 

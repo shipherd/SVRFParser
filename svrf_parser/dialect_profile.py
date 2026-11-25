@@ -76,6 +76,7 @@ class DialectProfileRegistry:
             )
         )
         self._ast_by_type = {entry.node_type: entry for entry in self.ast_profiles}
+        self._ast_type_cache = {}
         self._directives_by_first_word = {}
         for entry in self.directive_profiles:
             if entry.keywords:
@@ -86,7 +87,12 @@ class DialectProfileRegistry:
                 self._operations_by_first_word.setdefault(entry.head_prefix[0], []).append(entry)
 
     def match_ast(self, node):
-        return self._ast_by_type.get(type(node).__name__)
+        cls = type(node)
+        if cls not in self._ast_type_cache:
+            self._ast_type_cache[cls] = next(
+                (self._ast_by_type[base.__name__] for base in cls.__mro__ if base.__name__ in self._ast_by_type), None
+            )
+        return self._ast_type_cache[cls]
 
     def match_directive(self, keywords):
         keywords = tuple(str(keyword).upper() for keyword in keywords or ())
@@ -159,6 +165,7 @@ AST_DIALECT_PROFILES = (
     _ast_entry("rule_check", "RuleCheckBlock", ("DRC",), "rule_check"),
     _ast_entry("connect", "Connect", ("CORE", "LVS"), "connectivity"),
     _ast_entry("device", "Device", ("LVS", "DFM"), "device_extraction"),
+    _ast_entry("local_svrf", "LocalSvrf", ("DFM",), "local_svrf"),
     _ast_entry("dmacro", "DMacro", ("CORE",), "macro_definition"),
     _ast_entry("macro_call", "MacroCall", ("CORE",), "macro_call"),
     _ast_entry("property_block", "PropertyBlock", ("DFM",), "property_block"),

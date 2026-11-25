@@ -141,6 +141,11 @@ class OperationSchemaRegistry:
                 "parse_strategy": "dfm_rdb",
                 "parenthesized_scalar_modifiers": True,
             }
+        elif second == "DV":
+            j = next_non_newline_index(idx)
+            if j < len(tokens) and tokens[j].value in {"OVERRIDE", "ANALYZE", "INTERACT"}:
+                words += (tokens[j].value,)
+                idx = j + 1
         elif second == "DP":
             updates = {"parenthesized_scalar_modifiers": True}
             third_idx = next_non_newline_index(idx)

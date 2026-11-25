@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from . import ast
+from .semantic_macros import enable_fmacro
 from .semantic_lvs_directives import LvsDirectiveValidationMixin
 from .semantic_pex_directives import PexDirectiveValidationMixin
 from .semantic_result_directives import ResultDirectiveValidationMixin
@@ -54,7 +56,7 @@ class DirectiveValidationMixin(
                 return False
             if non_negative and numeric < 0:
                 return False
-            if integer and int(numeric) != numeric:
+            if integer and isinstance(numeric, float) and not numeric.is_integer():
                 return False
             return True
         text = _coerce_argument_text(argument)
@@ -85,7 +87,7 @@ class DirectiveValidationMixin(
             return False
         if non_negative and numeric < 0:
             return False
-        if integer and int(numeric) != numeric:
+        if integer and not numeric.is_integer():
             return False
         return True
 
@@ -116,6 +118,52 @@ class DirectiveValidationMixin(
 
     def _validate_directive_arguments(self, node, scope):
         keyword_tuple = tuple(node.keywords)
+        args = node.arguments
+
+        if keyword_tuple == ("RESOLUTION",):
+            if len(args) not in (1, 2) or not all(self._matches_numeric_argument(a, scope, positive=True, integer=True) for a in args):
+                self.error("semantic.directive.invalid_value", "RESOLUTION expects one or two positive grid integers", node)
+            return
+
+        if keyword_tuple == ("POLYGON",):
+            if len(args) < 5 or len(args) % 2 == 0:
+                self.error("semantic.directive.polygon_coordinates",
+                           "POLYGON requires at least two coordinate pairs followed by a layer", node)
+            elif len(args) == 5 and all(isinstance(a, (int, float)) for a in args[:4]):
+                if args[0] >= args[2] or args[1] >= args[3]:
+                    self.error("semantic.directive.polygon_rectangle",
+                               "Rectangle coordinates must give the lower-left then upper-right corner", node)
+            return
+        if keyword_tuple == ("SNAP", "OFFGRID"):
+            if args not in (["YES"], ["NO"]):
+                self.error("semantic.directive.invalid_value", "SNAP OFFGRID expects YES or NO", node)
+            return
+        if keyword_tuple == ("LAYER", "RESOLUTION"):
+            grid_start = len(args)
+            while (grid_start > 0 and not isinstance(args[grid_start - 1], ast.Expression)
+                   and self._matches_numeric_argument(args[grid_start - 1], scope, positive=True, integer=True)):
+                grid_start -= 1
+            if not (grid_start >= 1 and len(args) - grid_start in (1, 2)
+                    and all(isinstance(a, str) for a in args[:grid_start])):
+                self.error("semantic.directive.argument_shape",
+                           "LAYER RESOLUTION expects layer names followed by one or two positive grid integers", node)
+            else:
+                for name in args[:grid_start]:
+                    self._warn_unknown_layer("semantic.layer_resolution.unknown_layer", name, node, scope)
+            return
+        if keyword_tuple[:1] == ("#PRAGMA",):
+            if (keyword_tuple not in {("#PRAGMA", "ENV"), ("#PRAGMA", "DEFENV")}
+                    or len(args) != 2 or not args[0] or "$" in args[1]):
+                self.error("semantic.preprocessor.pragma_arguments",
+                           "#PRAGMA ENV/DEFENV expects a variable name and a literal default value", node)
+            return
+        if keyword_tuple[:1] == ("#USING",):
+            options = {"ENV": ["LAYOUT", "PLACE", "CELL"], "KEYWORD": ["FMACRO"], "REGEXP": ["GROUP"]}
+            if len(keyword_tuple) != 2 or options.get(keyword_tuple[-1]) != args:
+                self.error("semantic.preprocessor.using_arguments", "Unrecognized #USING option or arguments", node)
+            elif keyword_tuple == ("#USING", "KEYWORD"):
+                enable_fmacro(self, node, scope.branch_path)
+            return
 
         if keyword_tuple == ("LVS", "COMPARE", "CASE"):
             self._validate_lvs_compare_case_arguments(node)

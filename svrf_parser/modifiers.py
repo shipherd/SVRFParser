@@ -10,7 +10,9 @@ from .symbol_convention import SYMBOL_CONVENTION_REGISTRY
 
 def modifier_value_context(name, fallback="generic"):
     name = str(name).upper()
-    if name == "BY" or name.endswith(" BY") or name in SYMBOL_CONVENTION_REGISTRY.scalar_tuple_heads:
+    if name == "RDB":
+        return "literal"
+    if name in {"BY", "BY FACTOR"} or name.endswith(" BY") or name in SYMBOL_CONVENTION_REGISTRY.scalar_tuple_heads:
         return "scalar"
     return fallback
 

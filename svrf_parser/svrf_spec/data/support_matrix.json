@@ -43,7 +43,7 @@
         "luj1752242843309\\iddc028bbf-ba2d-4d09-b069-717e96433bbb.html"
       ],
       "name": "polygon_directive",
-      "note": "POLYGON directives are recognized, but only generic semantic handling is implemented.",
+      "note": "Coordinate-pair counts and literal rectangle corner order are checked without evaluating layout geometry.",
       "parser_support": "full",
       "semantic_support": "limited",
       "support_level": "limited",
@@ -97,7 +97,7 @@
         "luj1752242843309\\iddc028bbf-ba2d-4d09-b069-717e96433bbb.html"
       ],
       "name": "encrypted_block",
-      "note": "Encrypted SVRF blocks are preserved structurally but not semantically interpreted.",
+      "note": "Recognized plaintext participates in validation. Partial plaintext reports diagnostics; opaque payloads are preserved without decryption.",
       "parser_support": "full",
       "semantic_support": "opaque",
       "support_level": "opaque",

@@ -229,6 +229,10 @@ class ExpressionParserMixin:
         return PREFIX_EXPRESSION_SCHEMA_REGISTRY.match(self._collect_prefix_expression_tags(token))
 
     def _parse_ident_nud(self, token, loc, stop_tokens, stop_on_newline):
+        if token.value in {"CMACRO", "FMACRO"} and self._peek().type in (TT.IDENT, TT.STRING):
+            return self._parse_macro_invocation(inline=True)
+        if token.value in {"INTERNAL", "EXTERNAL", "ENCLOSURE", "INTERACT"} and not self._can_start_expression_token(self._peek()):
+            return self._parse_ident_layer_ref(token, loc, stop_tokens, stop_on_newline)
         if self._expression_context == "modifier":
             name, _ = self._peek_callable_name_before_paren()
             if name is not None:
@@ -347,6 +351,9 @@ class ExpressionParserMixin:
     def _led(self, left, lbp, stop_tokens, stop_on_newline):
         token = self._cur()
         loc = self._loc(token)
+        if self._at_ident("NOT") and self._peek().value == "WITH" and self._peek(2).value == "EDGE":
+            self._advance()
+            return self._parse_with_led(left, loc, stop_tokens, stop_on_newline, negated=True)
         schema = self._resolve_led_expression_schema()
         handler = getattr(self, schema.parser_method)
         return handler(left, lbp, loc, stop_tokens, stop_on_newline)

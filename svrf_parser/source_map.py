@@ -11,6 +11,12 @@ from .lexer import Lexer
 from .tokens import TokenType
 
 
+def read_source_text(path):
+    """Keep character offsets aligned with the decoded file, including CRLF."""
+    with open(path, "r", encoding="utf-8", errors="replace", newline="") as source:
+        return source.read()
+
+
 def _line_starts(text):
     return [0, *(match.end() for match in re.finditer(r"\r\n|\r|\n", text))]
 
@@ -115,13 +121,12 @@ class SourceMap:
             node.filename = span.pop("filename")
             node.include_stack = span.pop("include_stack")
             source_text = span.pop("snippet")
-            node.set_span(**span, source_text=source_text)
-            if isinstance(node, ast.EncryptedBlock):
+            if isinstance(node, ast.EncryptedBlock) and source_text != node.source_text:
                 # Keep the original payload while its body reflects textual includes.
                 tokens = Lexer(source_text, filename=node.filename).tokens()
                 payload = next((token for token in tokens if token.type == TokenType.ENCRYPTED), None)
-                if payload is not None:
-                    node.content = payload.value
+                node.content = payload.value if payload is not None else ""
+            node.set_span(**span, source_text=source_text)
         end_line, end_col = root_source.position(len(root_source.text))
         program.set_span(1, 1, end_line, end_col, 0, len(root_source.text), root_source.text)
         program.filename = root_source.filename

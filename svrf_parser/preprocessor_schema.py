@@ -4,6 +4,26 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from .tokens import TokenType
+
+CONDITIONAL_OPENERS = frozenset({"#IFDEF", "#IFNDEF", "#IFDEF_EXP"})
+
+
+def pragma_arguments(tokens):
+    """Read case-sensitive strings, joining contiguous parts of unquoted paths."""
+    args = []
+    end = None
+    for token in tokens:
+        if token.type in (TokenType.NEWLINE, TokenType.EOF):
+            break
+        part = token.value if token.type == TokenType.STRING else token.raw
+        if token.offset == end:
+            args[-1] += part
+        else:
+            args.append(part)
+        end = token.end_offset
+    return args
+
 
 @dataclass(frozen=True, slots=True)
 class PreprocessorSchema:
@@ -38,9 +58,10 @@ PREPROCESSOR_SCHEMAS = (
     PreprocessorSchema("define", frozenset({"#DEFINE"}), "_parse_define"),
     PreprocessorSchema("include", frozenset({"#INCLUDE"}), "_parse_pp_include"),
     PreprocessorSchema("undefine", frozenset({"#UNDEFINE"}), "_parse_undefine"),
+    PreprocessorSchema("options", frozenset({"#PRAGMA", "#USING"}), "_parse_pp_option"),
     PreprocessorSchema(
         "conditional",
-        frozenset({"#IFDEF", "#IFNDEF", "#IFDEF_EXP"}),
+        CONDITIONAL_OPENERS,
         "_parse_ifdef_from_preprocessor",
     ),
     PreprocessorSchema(

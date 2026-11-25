@@ -148,6 +148,7 @@ class SymbolTable:
     conditional_preprocessor: set = field(default_factory=set)
     local_only_references: set = field(default_factory=set)
     definition_paths: dict = field(default_factory=dict)
+    macro_definitions: dict = field(default_factory=dict)
 
     def availability(self, kinds, name, branch_path=()):
         name = _normalized_scope_name(name)
@@ -204,6 +205,7 @@ class ValidationScope:
     defer_variable_order: bool = False
     symbol_table: SymbolTable | None = None
     branch_path: frozenset = frozenset()
+    macro_owner: ast.DMacro | None = None
     conditional: dict = field(default_factory=dict)
 
     @classmethod
@@ -222,7 +224,7 @@ class ValidationScope:
         path = self.branch_path if branch is None else self.branch_path | {branch}
         return ValidationScope(
             parent=self, defer_variable_order=self.defer_variable_order,
-            symbol_table=self.symbol_table, branch_path=frozenset(path),
+            symbol_table=self.symbol_table, branch_path=frozenset(path), macro_owner=self.macro_owner,
         )
 
     def merge_branches(self, branches):
@@ -498,6 +500,35 @@ def build_symbol_table(statements, filename="<input>", strict=False):
 
     table = SymbolTable()
     diagnostics = []
+    pp_live = {}
+
+    def preprocessor(stmt, name, filename, path, undef=False):
+        name = _normalized_scope_name(name)
+        path = frozenset(path)
+        live = pp_live.setdefault(name, [])
+        if undef:
+            remaining = []
+            for old, definition in live:
+                if any((key, not side) in old for key, side in path):
+                    remaining.append((old, definition))
+                    continue
+                # Subtract this branch, retaining the mutually exclusive paths.
+                for key, side in path - old:
+                    remaining.append((old | {(key, not side)}, definition))
+                    old = old | {(key, side)}
+            pp_live[name] = live = remaining
+        else:
+            if any(not any((key, not side) in old for key, side in path) for old, _ in live):
+                diagnostics.append(_node_diagnostic(SEVERITY_ERROR, "semantic.duplicate_preprocessor",
+                                   f"Duplicate preprocessor definition for {name}", stmt, filename))
+            live.append((path, stmt))
+        table.preprocessor.pop(name, None)
+        table.conditional_preprocessor.discard(name)
+        table.definition_paths["preprocessor", name] = [old for old, _ in live]
+        if any(not old for old, _ in live):
+            table.preprocessor[name] = next(definition for old, definition in live if not old)
+        elif live:
+            table.conditional_preprocessor.add(name)
 
     def add_symbol(kind, name, stmt, stmt_filename, branch_path=()):
         if not name:
@@ -512,6 +543,7 @@ def build_symbol_table(statements, filename="<input>", strict=False):
         elif kind == "macro":
             bucket = table.macros
             conditional_bucket = table.conditional_macros
+            table.macro_definitions.setdefault(name, []).append((frozenset(branch_path), stmt))
         elif kind == "group":
             bucket = table.groups
             conditional_bucket = table.conditional_groups
@@ -569,13 +601,9 @@ def build_symbol_table(statements, filename="<input>", strict=False):
             elif isinstance(stmt, ast.RuleCheckBlock):
                 add_symbol("rule", stmt.name, stmt, stmt_filename, branch_path)
             elif isinstance(stmt, ast.Define) and stmt.name:
-                add_symbol(
-                    "preprocessor",
-                    stmt.name,
-                    stmt,
-                    stmt_filename,
-                    branch_path=branch_path,
-                )
+                preprocessor(stmt, stmt.name, stmt_filename, branch_path)
+            elif isinstance(stmt, ast.Directive) and stmt.keywords == ["#UNDEFINE"] and stmt.arguments:
+                preprocessor(stmt, str(stmt.arguments[0]), stmt_filename, branch_path, undef=True)
 
             if isinstance(stmt, ast.IfDef):
                 push_stream(stmt.else_body, stmt_filename, (*branch_path, (id(stmt), False)))

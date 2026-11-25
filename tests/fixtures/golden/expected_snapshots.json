@@ -37,8 +37,8 @@
       "statements": [
         {
           "arguments": [
-            "PERC_ADP_PROPERTIES",
-            "[]"
+            "Perc_ADP_properties",
+            "[/* body */]"
           ],
           "keywords": [
             "TVF",

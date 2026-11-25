@@ -7,17 +7,17 @@ import re
 
 from . import ast
 from .expression_parser import ExpressionParserMixin
-from .exceptions import ParseError, SVRFParseError
+from .exceptions import LexerError, ParseError, SVRFParseError
 from .keywords import _DIRECTIVE_HEADS, _LAYER_BP
 from .lexer import Lexer
 from .operation_handlers import OperationParserMixin
 from .parser_cursor import ParserCursorMixin
-from .preprocessor_schema import PREPROCESSOR_SCHEMA_REGISTRY
+from .preprocessor_schema import CONDITIONAL_OPENERS, PREPROCESSOR_SCHEMA_REGISTRY, pragma_arguments
 from .segmenter import SegmenterConfig, StatementSegmenter
 from .statement_handlers import StatementParserMixin
 from .svrf_constructs import count_svrf_constructs
 from .svrf_spec import PARSER_SPEC
-from .tokens import TokenType
+from .tokens import TokenType, rebase_tokens
 
 TT = TokenType
 
@@ -63,6 +63,29 @@ _DOC_HISTORICAL_ENCLOSURE_FUNCTION_NAMES = PARSER_SPEC.family("doc_historical_en
 _DOC_BUILTIN_LANGUAGE_FUNCTION_NAMES = PARSER_SPEC.family("doc_builtin_language_function_names")
 _DOC_ALL_FUNCTION_NAMES = PARSER_SPEC.family("doc_all_function_names")
 _FUNCTION_LIKE_NAMES = PARSER_SPEC.table("function_like_names")
+_DECLARATION_LINE = re.compile(r"(?:^|(?<=\r))[ \t]*(?:LAYER|DMACRO|VARIABLE)[ \t]+", re.I | re.M | re.ASCII)
+
+_PREFIX_OPS = frozenset(
+    _GENERIC_PREFIX_OPS | _UNARY_OPS | _PREFIX_BOOLEAN_OPS | _MEASUREMENT_OPS | _EDGE_BINARY_PREFIX_OPS
+)
+_EXPRESSION_PREFIX_WORDS = _PREFIX_OPS | {"WITH", "NOT"}
+_SEGMENTER_CONFIG = SegmenterConfig(
+    directive_heads=frozenset(_DIRECTIVE_HEADS),
+    directive_same_line_heads=_DIRECTIVE_SAME_LINE_HEADS,
+    directive_secondary_words=_DIRECTIVE_SECONDARY_WORDS,
+    top_level_line_heads=frozenset(_TOP_LEVEL_EXPLICIT_HEADS | {"TRACE", "IF", "POLYGON", "RDB", "TVF"}),
+    top_level_same_line_heads=frozenset(_TOP_LEVEL_EXPLICIT_HEADS | {"POLYGON", "RDB", "TVF"}),
+    expression_like_directive_heads=_PREFIX_OPS,
+    rule_body_same_line_starters=_RULE_BODY_SAME_LINE_STARTERS,
+    comparison_symbols=_COMPARISON_SYMBOLS,
+    arithmetic_symbols=frozenset(_ARITHMETIC_BP),
+    expression_operator_words=frozenset(_INFIX_BP) | _PREFIX_OPS | {"WITH"},
+    expression_prefix_words=_EXPRESSION_PREFIX_WORDS,
+    modifier_starters=_MODIFIER_STARTERS,
+    prefix_boolean_ops=_PREFIX_BOOLEAN_OPS,
+    group_continuation_keywords=_EXPRESSION_PREFIX_WORDS,
+    measurement_ops=_MEASUREMENT_OPS,
+)
 
 
 class Parser(ParserCursorMixin, StatementParserMixin, OperationParserMixin, ExpressionParserMixin):
@@ -78,54 +101,8 @@ class Parser(ParserCursorMixin, StatementParserMixin, OperationParserMixin, Expr
         self.warnings = []
         self._current_statement_cst = None
         self._expression_context = "scalar"
-        self._segmenter = StatementSegmenter(
-            tokens,
-            SegmenterConfig(
-                directive_heads=frozenset(_DIRECTIVE_HEADS),
-                directive_same_line_heads=_DIRECTIVE_SAME_LINE_HEADS,
-                directive_secondary_words=_DIRECTIVE_SECONDARY_WORDS,
-                top_level_line_heads=frozenset(_TOP_LEVEL_EXPLICIT_HEADS | {"TRACE", "IF", "POLYGON", "RDB", "TVF"}),
-                top_level_same_line_heads=frozenset(_TOP_LEVEL_EXPLICIT_HEADS | {"POLYGON", "RDB", "TVF"}),
-                expression_like_directive_heads=frozenset(
-                    _GENERIC_PREFIX_OPS
-                    | _UNARY_OPS
-                    | _PREFIX_BOOLEAN_OPS
-                    | _MEASUREMENT_OPS
-                    | _EDGE_BINARY_PREFIX_OPS
-                ),
-                rule_body_same_line_starters=_RULE_BODY_SAME_LINE_STARTERS,
-                comparison_symbols=_COMPARISON_SYMBOLS,
-                arithmetic_symbols=frozenset(_ARITHMETIC_BP),
-                expression_operator_words=frozenset(
-                    set(_INFIX_BP)
-                    | _EDGE_BINARY_PREFIX_OPS
-                    | _PREFIX_BOOLEAN_OPS
-                    | _UNARY_OPS
-                    | _GENERIC_PREFIX_OPS
-                    | _MEASUREMENT_OPS
-                    | {"WITH"}
-                ),
-                expression_prefix_words=frozenset(
-                    _GENERIC_PREFIX_OPS
-                    | _PREFIX_BOOLEAN_OPS
-                    | _UNARY_OPS
-                    | _MEASUREMENT_OPS
-                    | _EDGE_BINARY_PREFIX_OPS
-                    | {"WITH", "NOT"}
-                ),
-                modifier_starters=_MODIFIER_STARTERS,
-                prefix_boolean_ops=_PREFIX_BOOLEAN_OPS,
-                group_continuation_keywords=frozenset(
-                    _PREFIX_BOOLEAN_OPS
-                    | _UNARY_OPS
-                    | _GENERIC_PREFIX_OPS
-                    | _MEASUREMENT_OPS
-                    | _EDGE_BINARY_PREFIX_OPS
-                    | {"WITH", "NOT"}
-                ),
-                measurement_ops=_MEASUREMENT_OPS,
-            ),
-        )
+        self._macro_arities = {}
+        self._segmenter = StatementSegmenter(tokens, _SEGMENTER_CONFIG)
 
     def parse(self):
         start = self.pos
@@ -448,30 +425,35 @@ class Parser(ParserCursorMixin, StatementParserMixin, OperationParserMixin, Expr
         return self._parse_statement_shape("layer")
 
     def _parse_layer_map(self, start):
-        tokens = []
-        while not self._at_statement_limit("top", allow_same_line_statement=True):
-            tokens.append(self._advance())
-        gds_num = 0
-        map_type = "DATATYPE"
-        type_num = 0
-        internal_num = 0
-        ints = [token.value for token in tokens if token.type == TT.NUMBER and isinstance(token.value, int)]
-        if ints:
-            gds_num = ints[0]
-            internal_num = ints[-1]
-            if len(ints) > 2:
-                type_num = ints[1]
-        for token in tokens:
-            if token.type == TT.IDENT and token.value in {"DATATYPE", "TEXTTYPE"}:
-                map_type = token.value
-                break
-        return ast.LayerMap(
-            gds_num=gds_num,
-            map_type=map_type,
-            type_num=type_num,
-            internal_num=internal_num,
-            **self._loc(start),
-        )
+        def integer():
+            t = self._expect(TT.NUMBER)
+            if not isinstance(t.value, int) or t.value < 0:
+                raise ParseError("Expected a non-negative layer number", t.line, t.col, t)
+            return t
+
+        def selector():
+            constraints = []
+            while self._cur().type == TT.SYMBOL and self._cur().value in _COMPARISON_SYMBOLS:
+                pos = self.pos
+                op = self._advance()
+                t = integer()
+                value = self._finish_node(ast.NumberLiteral(value=t.value, **self._loc(t)), self.pos-1)
+                constraints.append(self._finish_node(ast.Constraint(op=op.value, value=value, **self._loc(op)), pos))
+            return constraints or integer().value
+
+        self._expect(TT.IDENT, "MAP")
+        source = selector()
+        if not self._at(TT.IDENT, "TEXTTYPE") and not self._at(TT.IDENT, "DATATYPE"):
+            self._expect(TT.IDENT, "DATATYPE", "Expected DATATYPE or TEXTTYPE")
+        kind = self._advance().value
+        source_type = selector()
+        target = integer().value
+        texttype = integer().value if kind == "TEXTTYPE" and self._at(TT.NUMBER) else None
+        if self._at(TT.NUMBER) and not self._segmenter.starts_rule_check_at(self.pos, "top"):
+            t = self._cur()
+            raise ParseError("Unexpected extra LAYER MAP target", t.line, t.col, t)
+        return ast.LayerMap(gds_num=source, map_type=kind, type_num=source_type,
+                            internal_num=target, target_texttype=texttype, **self._loc(start))
 
     def _parse_variable(self):
         return self._parse_statement_shape("variable")
@@ -665,10 +647,27 @@ class Parser(ParserCursorMixin, StatementParserMixin, OperationParserMixin, Expr
         args = self._collect_line_arguments()
         return ast.Directive(keywords=[start.value], arguments=args, **self._loc(start))
 
+    def _parse_pp_option(self):
+        start = self._advance()
+        words = [start.value]
+        if self._at(TT.IDENT):
+            words.append(self._advance().value)
+        begin = self.pos
+        while self._cur().type not in (TT.NEWLINE, TT.EOF):
+            self._advance()
+        args = pragma_arguments(self.tokens[begin:self.pos])
+        if start.value == "#USING":
+            args = [word.upper() for word in args]
+        self._match(TT.NEWLINE)
+        return ast.Directive(keywords=words, arguments=args, **self._loc(start))
+
     def _parse_ifdef(self, mode):
         start = self._expect(TT.PREPROCESSOR)
         negated = start.value == "#IFNDEF"
-        name = self._parse_name(allow_missing=True)
+        if self._match(TT.SYMBOL, "$"):
+            name = "$" + self._parse_name(preserve_case=True)
+        else:
+            name = self._parse_name(allow_missing=True)
         value = self._collect_line_text() or None
 
         then_header, then_property = self._parse_ifdef_branch_header(mode, {"#ELSE", "#ENDIF"})
@@ -687,7 +686,8 @@ class Parser(ParserCursorMixin, StatementParserMixin, OperationParserMixin, Expr
             then_body,
             else_body,
         )
-        return ast.IfDef(
+        conditional = ast.IfDefExp if start.value == "#IFDEF_EXP" else ast.IfDef
+        return conditional(
             name=name or "",
             value=value,
             negated=negated,
@@ -771,7 +771,7 @@ class Parser(ParserCursorMixin, StatementParserMixin, OperationParserMixin, Expr
         immediate_property_body = not (
             next_idx < self.length
             and self.tokens[next_idx].type == TT.PREPROCESSOR
-            and self.tokens[next_idx].value in {"#IFDEF", "#IFNDEF", "#ELSE", "#ENDIF"}
+            and (self.tokens[next_idx].value in CONDITIONAL_OPENERS or self.tokens[next_idx].value in {"#ELSE", "#ENDIF"})
         )
         if not immediate_property_body:
             return []
@@ -870,6 +870,8 @@ class Parser(ParserCursorMixin, StatementParserMixin, OperationParserMixin, Expr
         if self._at(TT.PREPROCESSOR, "#ENDCRYPT"):
             self._advance()
             self._collect_line_text()
+        else:
+            self._warn("parser.encrypted.unterminated", "Expected #ENDCRYPT to close block", token=start)
         body, parse_status = self._try_parse_encrypted_plaintext(content, content_token)
         return ast.EncryptedBlock(
             content=content,
@@ -880,49 +882,75 @@ class Parser(ParserCursorMixin, StatementParserMixin, OperationParserMixin, Expr
         )
 
     def _try_parse_encrypted_plaintext(self, content, content_token):
+        statements, warnings = self._inspect_payload(content, self.filename, content_token, self.source_text, strict=self.strict)
+        if not statements:
+            return [], "opaque"
+        self.warnings.extend(warnings)
+        return statements, "partial" if warnings else "plaintext"
+
+    @classmethod
+    def parse_plaintext_payload(cls, content, filename):
+        """Only confidently parsed payloads may supply external INCLUDE files."""
+        statements, warnings = cls._inspect_payload(content, filename)
+        return [] if warnings else statements
+
+    @classmethod
+    def _inspect_payload(cls, content, filename, origin=None, outer_text=None, *, strict=False):
         if not content or not content.strip():
-            return [], "opaque"
+            return [], []
         try:
-            lexer = Lexer(content, filename=self.filename)
-            parser = type(self)(
-                lexer.tokens(),
-                filename=self.filename,
-                source_text=content,
-                strict=False,
-            )
-            program = parser.parse()
-        except Exception:
-            return [], "opaque"
-        statements = list(getattr(program, "statements", ()) or ())
-        if not statements or parser.warnings:
-            return [], "opaque"
-        if any(isinstance(statement, ast.ErrorNode) for statement in statements):
-            return [], "opaque"
+            recovered_lexing = False
+            try:
+                tokens = Lexer(content, filename=filename).tokens()
+            except LexerError:
+                if "{" not in content and not _DECLARATION_LINE.search(content):
+                    return [], []
+                tokens = Lexer(content, filename=filename, recover_invalid=True).tokens()
+                recovered_lexing = True
+            if origin is not None:
+                rebase_tokens(tokens, origin.line, origin.col, origin.offset)
+            parser = cls(tokens, filename=filename, source_text=outer_text if origin else content)
+            statements = parser.parse().statements
+        except (LexerError, ParseError, ValueError, RecursionError):
+            return [], []
         if count_svrf_constructs(statements) == 0:
-            return [], "opaque"
-        if content_token is not None:
-            self._shift_encrypted_body_spans(
-                statements,
-                line_delta=content_token.line - 1,
-                first_line_col_delta=content_token.col - 1,
-                offset_delta=content_token.offset,
-            )
-        return statements, "plaintext"
+            return [], []
+        if (parser.warnings or recovered_lexing) and not cls._has_plaintext_declaration(statements):
+            # An INCLUDE or an assignment-shaped fragment alone is not evidence that a
+            # damaged payload is SVRF. In particular it must not trigger file access.
+            return [], []
+        if recovered_lexing:
+            spans = iter(sorted((d.start_offset, d.end_offset) for d in parser.warnings))
+            span = next(spans, None)
+            warned_line = None
+            for token in tokens:
+                if token.type != TT.INVALID or token.line == warned_line:
+                    continue
+                while span is not None and span[1] <= token.offset:
+                    span = next(spans, None)
+                if span is None or token.offset < span[0]:
+                    parser._warn("parser.encrypted.invalid_token", "Invalid token in plaintext payload", token=token)
+                    warned_line = token.line
+            parser.warnings.sort(key=lambda d: d.start_offset)
+        if strict and parser.warnings:
+            diagnostic = parser.warnings[0]
+            token = next((t for t in tokens if t.offset >= diagnostic.start_offset), tokens[-1])
+            raise ParseError(diagnostic.message, diagnostic.line, diagnostic.col, token)
+        return statements, parser.warnings
 
     @staticmethod
-    def _shift_encrypted_body_spans(statements, *, line_delta, first_line_col_delta, offset_delta):
-        for statement in statements:
-            for node in statement.walk():
-                if node.line:
-                    if node.line == 1:
-                        node.col += first_line_col_delta
-                    if node.end_line == 1:
-                        node.end_col += first_line_col_delta
-                    node.line += line_delta
-                    node.end_line += line_delta
-                if node.line:
-                    node.start_offset += offset_delta
-                    node.end_offset += offset_delta
+    def _has_plaintext_declaration(statements):
+        pending = list(statements)
+        while pending:
+            node = pending.pop()
+            if isinstance(node, (ast.RuleCheckBlock, ast.LayerDef, ast.VariableDef, ast.DMacro)):
+                return True
+            if isinstance(node, ast.LayerAssignment) and isinstance(node.expression, (ast.DRCOp, ast.UnaryOp, ast.BinaryOp)):
+                return True
+            if isinstance(node, ast.IfDef):
+                pending.extend(node.then_body)
+                pending.extend(node.else_body)
+        return False
 
     def _parse_property_block(self):
         return self._parse_statement_shape("property_block")

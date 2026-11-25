@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from . import ast
+from .semantic_dfm import validate_fill_shape
 from .semantic_directives import _DIRECTIVE_ALLOWED_ARGUMENT_COUNTS, _DIRECTIVE_MIN_ARGUMENTS
 from .semantic_drc_rules import (
     DRCOP_MIN_CONSTRAINTS,
@@ -72,9 +73,14 @@ def validate_semantic_node(validator, node, scope, pending):
         return
 
     if isinstance(node, ast.DfmSpec):
+        validate_fill_shape(validator, node)
         scope.define_placeholder(node.name)
         validator._validate_value(node.arguments, scope)
         validator._push_statement_tasks(pending, node.body, scope)
+        return
+
+    if isinstance(node, ast.LocalSvrf):
+        validator._validate_local_svrf(node, scope)
         return
 
     if isinstance(node, ast.PercLoad):
@@ -82,6 +88,10 @@ def validate_semantic_node(validator, node, scope, pending):
         return
 
     if isinstance(node, ast.DfmClause):
+        if node.keywords in (["ENC1"], ["ENC2"]):
+            for value in node.arguments:
+                if isinstance(value, ast.NumberLiteral) and value.value < 0:
+                    validator.error("semantic.dfm.via_dimension", "Via enclosure cannot be negative", value)
         validator._validate_value(node.arguments, scope)
         return
 
@@ -120,6 +130,11 @@ def validate_semantic_node(validator, node, scope, pending):
 
     if isinstance(node, ast.LayerDef):
         scope.define_layer(node.name)
+        return
+
+    if isinstance(node, ast.LayerMap):
+        if node.internal_num > 1048575 or (node.target_texttype is not None and node.target_texttype > 65535):
+            validator.error("semantic.layer_map.target_range", "Mapped layer or texttype exceeds its allowed range", node)
         return
 
     if isinstance(node, ast.LayerAssignment):
@@ -180,6 +195,8 @@ def validate_semantic_node(validator, node, scope, pending):
                 "CONNECT/SCONNECT requires at least one layer",
                 node,
             )
+        if not node.soft and len(node.layers) > 32:
+            validator.error("semantic.connect.too_many_layers", "CONNECT permits at most 32 layers", node)
         if node.soft:
             if len(node.layers) < 2:
                 validator.error(
@@ -297,6 +314,11 @@ def validate_semantic_node(validator, node, scope, pending):
                 )
             else:
                 validator._validate_value(aux, scope)
+        for layer in ([node.text_model_layer] if node.text_model_layer else []) + node.text_property_layers:
+            validator._warn_unknown_layer("semantic.device.unknown_text_layer", layer, node, scope)
+        if node.signature:
+            for layer in node.signature[1]:
+                validator._warn_unknown_layer("semantic.device.unknown_signature_layer", layer, node, scope)
         if not node.pins and node.cmacro is None:
             validator.warning(
                 "semantic.device.no_pins",
@@ -310,6 +332,9 @@ def validate_semantic_node(validator, node, scope, pending):
     if isinstance(node, ast.DMacro):
         scope.define_macro(node.name)
         body_scope = scope.child()
+        body_scope.macro_owner = node
+        if len(set(node.params)) != len(node.params):
+            validator.error("semantic.macro.duplicate_parameter", "DMACRO parameter names must be distinct", node)
         # Macro bodies are expanded at invocation, not at their declaration.
         body_scope.defer_variable_order = True
         for param in node.params:
@@ -320,6 +345,8 @@ def validate_semantic_node(validator, node, scope, pending):
         return
 
     if isinstance(node, ast.MacroCall):
+        if node.kind == "FMACRO":
+            validator.fmacro_calls.append((node, scope.branch_path))
         validator._validate_macro_reference(node.name, node, scope)
         return
 
@@ -339,6 +366,19 @@ def validate_semantic_node(validator, node, scope, pending):
         return
 
     if isinstance(node, ast.DRCOp):
+        if node.op == "DFM DV ANALYZE":
+            if not node.operands:
+                validator.error("semantic.drc.missing_operand", "DFM DV ANALYZE requires an input layer", node)
+            if not any(isinstance(m, tuple) and m[0] == "RDB" and isinstance(m[1], ast.StringLiteral) and m[1].value
+                       for m in node.modifiers):
+                validator.error("semantic.drc.missing_modifier", "DFM DV ANALYZE requires RDB and a filename", node)
+        if node.op in {"MAGNIFY", "DEANGLE", "SNAP"}:
+            values = (node.modifier_nodes[0].value,) if node.op == "MAGNIFY" and node.modifiers else node.operands[1:]
+            for value in values:
+                if isinstance(value, ast.NumberLiteral) and (
+                    value.value <= 0 or (node.op == "SNAP" and isinstance(value.value, float) and not value.value.is_integer())
+                ):
+                    validator.error("semantic.drc.geometry_value", f"Invalid {node.op} scale or grid value", value)
         if (
             node.op in WITH_OPS
             and not node.operands

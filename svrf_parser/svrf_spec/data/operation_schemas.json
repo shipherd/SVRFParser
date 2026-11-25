@@ -1,5 +1,12 @@
 {
   "contracts": {
+    "INT": {"min_operands": 1, "min_constraints": 1},
+    "EXT": {"min_operands": 1, "min_constraints": 1},
+    "ENC": {"min_operands": 2, "min_constraints": 1},
+    "DEANGLE": {"min_operands": 2, "operand_roles": ["layer", "scalar"]},
+    "MAGNIFY": {"min_operands": 1, "operand_roles": ["layer"]},
+    "ORNET": {"min_operands": 2, "operand_roles": ["layer", "layer"]},
+    "SNAP": {"min_operands": 2, "operand_roles": ["layer", "scalar", "scalar"]},
     "DEVICE LAYER": {
       "min_modifiers": 1
     },
@@ -123,6 +130,12 @@
     }
   },
   "entries": [
+    {"name": "DEANGLE", "head_prefix": ["DEANGLE"], "parse_strategy": "fixed_geometry"},
+    {"name": "MAGNIFY", "head_prefix": ["MAGNIFY"], "parse_strategy": "fixed_geometry"},
+    {"name": "ORNET", "head_prefix": ["ORNET"], "parse_strategy": "fixed_geometry"},
+    {"name": "SNAP", "head_prefix": ["SNAP"], "parse_strategy": "fixed_geometry"},
+    {"name": "GROW", "head_prefix": ["GROW"], "parse_strategy": "directional_geometry"},
+    {"name": "SHRINK", "head_prefix": ["SHRINK"], "parse_strategy": "directional_geometry"},
     {
       "allow_nonstatement_expression_newline": false,
       "bracket_modifier_mode": "none",
@@ -239,7 +252,7 @@
       "modifier_family": "default",
       "name": "EXPAND EDGE",
       "parenthesized_scalar_modifiers": false,
-      "parse_strategy": "default"
+      "parse_strategy": "directional_geometry"
     },
     {
       "allow_nonstatement_expression_newline": false,

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from . import ast
-from .clause_cst import DelimitedGroupClause, ModifierClause, OperandClause, ScalarClause
+from .clause_cst import DelimitedGroupClause, OperandClause, ScalarClause
 from .exceptions import ParseError
 from .include_syntax import EMBEDDED_INCLUDE_HEADS
 from .normalizer import normalize_statement_clause_cst
@@ -62,36 +62,12 @@ class StatementShapeParserMixin(StatementBlockParserMixin):
             return None
         return clause_cst
 
-    def _can_normalize_simple_device_clause_cst(self, clause_cst):
-        if not clause_cst.body_clauses:
-            return False
-        seen_cmacro = False
-        for idx, clause in enumerate(clause_cst.body_clauses):
-            if isinstance(clause, DelimitedGroupClause):
-                return False
-            if isinstance(clause, ScalarClause):
-                return False
-            if isinstance(clause, OperandClause):
-                if idx == 0:
-                    continue
-                if not seen_cmacro:
-                    return False
-                continue
-            if isinstance(clause, ModifierClause):
-                values = getattr(clause, "values", ())
-                if values[:1] == ("CMACRO",):
-                    seen_cmacro = True
-                    continue
-                if not seen_cmacro:
-                    return False
-                continue
-        values = getattr(clause_cst.body_clauses[0], "values", ())
-        return len(values) >= 2
-
     def _can_normalize_simple_macro_call_clause_cst(self, clause_cst):
-        if not clause_cst.body_clauses:
+        if self._at(TT.IDENT, "FMACRO") or not clause_cst.body_clauses:
             return False
         for clause in clause_cst.body_clauses:
+            if any(v in ("-", "+") for v in getattr(clause, "values", ())):
+                return False
             if isinstance(clause, DelimitedGroupClause):
                 return False
             if not isinstance(clause, (OperandClause, ScalarClause)):
@@ -114,6 +90,31 @@ class StatementShapeParserMixin(StatementBlockParserMixin):
     def _parse_statement_shape_include(self, shape):
         del shape
         return self._parse_include(embedded=False)
+
+    def _parse_fixed_specification(self):
+        start, words = self._consume_head_from_statement_cst()
+        args = []
+        while True:
+            if self._at(TT.NEWLINE):
+                idx = self._next_non_newline_index(self.pos)
+                if (not self._can_start_expression_token(self.tokens[idx])
+                        or self._segmenter.starts_line_statement_at(idx) or self._segmenter.starts_operation_at(idx)
+                        or (words == ["SNAP", "OFFGRID"] and args)):
+                    break
+                self.pos = idx
+            if self._at_statement_boundary("top", allow_same_line_statement=True):
+                break
+            args.append(self._parse_signed_scalar_argument())
+        return ast.Directive(keywords=words, arguments=args, **self._loc(start))
+
+    def _parse_signed_scalar_argument(self):
+        if self._at_symbol("-") or self._at_symbol("+"):
+            value = self._parse_expression(50, context="scalar")
+            return value.value if isinstance(value, ast.NumberLiteral) else value
+        return self._parse_scalar_argument()
+
+    def _at_device_netlist_option(self):
+        return self._at(TT.IDENT, "NETLIST") and self._peek().type == TT.IDENT and self._peek().value in {"ELEMENT", "MODEL"}
 
     def _parse_statement_shape_layer(self, shape):
         del shape
@@ -214,12 +215,6 @@ class StatementShapeParserMixin(StatementBlockParserMixin):
 
     def _parse_statement_shape_device(self, shape):
         del shape
-        normalized = self._try_normalize_active_statement_clause_cst(
-            "device",
-            validator=self._can_normalize_simple_device_clause_cst,
-        )
-        if normalized is not None:
-            return normalized
         start, keywords = self._consume_head_from_statement_cst(("DEVICE",))
         if keywords is None:
             start = self._expect(TT.IDENT, "DEVICE")
@@ -230,31 +225,93 @@ class StatementShapeParserMixin(StatementBlockParserMixin):
         aux_layers = []
         cmacro = None
         cmacro_args = []
+        netlist_options = []
+        connection_mode = text_model_layer = None
+        text_property_layers = []
+        swap_lists = []
+        signature = template = None
 
-        if self._cur().type == TT.IDENT:
-            token = self._advance()
+        def option_at(i):
+            words = tuple(t.value if t.type == TT.IDENT else None for t in self.tokens[i:i+3])
+            return (words[:1] in {("TEMPLATE",), ("SIGNATURE",)}
+                    or words[:2] in {("BY", "NET"), ("BY", "SHAPE"), ("NETLIST", "MODEL"), ("NETLIST", "ELEMENT")}
+                    or words in {("TEXT", "MODEL", "LAYER"), ("TEXT", "PROPERTY", "LAYER")})
+
+        def layer_list():
+            layers = [self._parse_name()]
+            while (self._cur().type in (TT.IDENT, TT.STRING) and not option_at(self.pos)
+                   and not self._at_ident("CMACRO") and not self._at_statement_boundary("top", allow_same_line_statement=True)):
+                layers.append(self._parse_name())
+            return layers
+
+        def swap_pins(close):
+            pins = [self._parse_name(), self._parse_name()]
+            while not self._match(TT.SYMBOL, close):
+                pins.append(self._parse_name())
+            return pins
+
+        if self._cur().type in (TT.IDENT, TT.STRING):
+            element = self._parse_name()
             if self._match(TT.SYMBOL, "("):
-                device_type = token.value
+                device_type = element
                 device_name = self._parse_name()
                 self._expect(TT.SYMBOL, ")")
             else:
-                device_name = token.value
+                device_name = element
 
         if self._cur().type in (TT.IDENT, TT.STRING):
             seed_layer = self._parse_name()
 
         while True:
+            if self._at(TT.NEWLINE):
+                i = self._next_non_newline_index(self.pos)
+                if not option_at(i):
+                    break
+                self.pos = i
+            if option_at(self.pos) and self._match(TT.IDENT, "BY"):
+                connection_mode = self._advance().value
+                continue
+            if option_at(self.pos) and self._match(TT.IDENT, "TEXT"):
+                model = self._advance().value == "MODEL"
+                self._expect(TT.IDENT, "LAYER")
+                if model:
+                    text_model_layer = self._parse_name()
+                else:
+                    text_property_layers.extend(layer_list())
+                continue
+            if self._match(TT.IDENT, "TEMPLATE"):
+                template = self._parse_name(preserve_case=True)
+                continue
+            if self._match(TT.IDENT, "SIGNATURE"):
+                value = None if self._match(TT.SYMBOL, "?") else self._expect(TT.STRING).value
+                signature = (value, layer_list())
+                continue
+            if self._match(TT.SYMBOL, "("):
+                if self._at_symbol("["):
+                    group = []
+                    while self._match(TT.SYMBOL, "["):
+                        group.append(swap_pins("]"))
+                    self._expect(TT.SYMBOL, ")")
+                    swap_lists.append(group)
+                else:
+                    swap_lists.append(swap_pins(")"))
+                continue
+            if self._at_device_netlist_option():
+                self._advance()
+                kind = self._advance().value
+                netlist_options.append((kind, self._parse_name(preserve_case=True)))
+                continue
             if self._cur().type == TT.IDENT and self._cur().value == "CMACRO":
                 self._advance()
                 cmacro = self._parse_name()
-                while not self._at_statement_limit(
+                while not option_at(self.pos) and not self._at_statement_limit(
                     "top",
                     allow_same_line_statement=False,
                     use_active_unit=False,
                 ):
-                    cmacro_args.append(self._parse_scalar_argument())
-                break
-            if self._at_statement_limit("top", allow_same_line_statement=True):
+                    cmacro_args.append(self._parse_signed_scalar_argument())
+                continue
+            if self._at_statement_boundary("top", allow_same_line_statement=True):
                 break
             if self._cur().type == TT.SYMBOL and self._cur().value == "[":
                 aux_layers.append(self._parse_bracketed_scalar_sequence())
@@ -266,8 +323,11 @@ class StatementShapeParserMixin(StatementBlockParserMixin):
             if self._cur().type in (TT.IDENT, TT.STRING):
                 pin_name = self._parse_name()
                 role = None
-                if self._match(TT.SYMBOL, "("):
+                end_role = self._segmenter.scan_name_end(self.pos+1) if self._at_symbol("(") else None
+                if end_role is not None and end_role < self.length and self.tokens[end_role].value == ")":
+                    self._advance()
                     role = self._parse_name()
+                    self._skip_newlines()
                     self._expect(TT.SYMBOL, ")")
                 pins.append((pin_name, role))
                 continue
@@ -281,6 +341,11 @@ class StatementShapeParserMixin(StatementBlockParserMixin):
             aux_layers=aux_layers,
             cmacro=cmacro,
             cmacro_args=cmacro_args,
+            netlist_options=netlist_options,
+            connection_mode=connection_mode,
+            text_model_layer=text_model_layer,
+            text_property_layers=text_property_layers,
+            swap_lists=swap_lists, signature=signature, template=template,
             **self._loc(start),
         )
 
@@ -293,6 +358,9 @@ class StatementShapeParserMixin(StatementBlockParserMixin):
         params = []
         while self._cur().type in (TT.IDENT, TT.STRING, TT.NUMBER):
             params.append(self._parse_name())
+        # Alternative conditional definitions need not have the same signature.
+        arity = len(params)
+        self._macro_arities[name] = arity if self._macro_arities.get(name, arity) == arity else None
         self._skip_newlines()
         self._expect(TT.SYMBOL, "{", "Expected '{' to start DMACRO body")
         body = self._parse_sequence(mode="macro", stop_symbols={"}"})
@@ -307,30 +375,47 @@ class StatementShapeParserMixin(StatementBlockParserMixin):
         )
         if normalized is not None:
             return normalized
-        prefix = (self._cur().value,) if self._cur().type == TT.IDENT else None
-        start, keywords = self._consume_head_from_statement_cst(prefix)
-        if keywords is None:
-            start = self._advance()
-            kind = start.value
-        else:
-            kind = keywords[0]
+        return self._parse_macro_invocation(inline=False)
+
+    def _parse_macro_invocation(self, *, inline):
+        previous = self._segmenter.previous_non_newline_index(self.pos-1)
+        assignment_rhs = inline and previous >= 0 and self.tokens[previous].value == "="
+        start = self._advance()
+        kind = start.value
         name = self._parse_name()
         arguments = []
 
-        if kind == "FMACRO" and self._match(TT.SYMBOL, "("):
+        if kind == "FMACRO":
+            self._expect(TT.SYMBOL, "(", "FMACRO requires a parenthesized argument list")
+            self._skip_newlines()
             while not self._at(TT.EOF) and not self._at_symbol(")"):
                 if self._match(TT.SYMBOL, ","):
+                    self._skip_newlines()
                     continue
-                arguments.append(self._parse_expression(stop_tokens={")", ","}, stop_on_newline=False))
-                self._match(TT.SYMBOL, ",")
+                arguments.append(self._parse_macro_argument())
+                self._skip_newlines()
             self._expect(TT.SYMBOL, ")")
         else:
-            while not self._at_statement_limit("top", allow_same_line_statement=True):
-                arguments.append(self._parse_expression(stop_on_newline=True))
+            arity = self._macro_arities.get(name) if inline else None
+            while not self._at_statement_limit("top", allow_same_line_statement=True, use_active_unit=not inline):
+                if inline and ((len(arguments) == arity and not assignment_rhs)
+                               or self._cur().value in (")", "]", ",", "RDB", "DVPARAMS")
+                               or ((bool(arguments) if arity is None else len(arguments) >= arity)
+                                   and self._led_binding_power() > 0)):
+                    break
+                arguments.append(self._parse_macro_argument())
                 if self._cur().type == TT.NEWLINE:
                     break
 
         return ast.MacroCall(kind=kind, name=name, arguments=arguments, **self._loc(start))
+
+    def _parse_macro_argument(self):
+        if self._at(TT.IDENT):
+            start = self.pos
+            token = self._cur()
+            return self._finish_node(ast.LayerRef(name=self._parse_name(), **self._loc(token)), start)
+        # Whitespace separates arguments. Only parentheses group infix arithmetic.
+        return self._parse_expression(50, stop_tokens={")", ","}, stop_on_newline=True, context="scalar")
 
     def _parse_statement_shape_variable(self, shape):
         del shape

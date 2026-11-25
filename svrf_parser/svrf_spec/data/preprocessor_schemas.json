@@ -1,5 +1,6 @@
 {
   "entries": [
+    {"name": "options", "tags": ["#PRAGMA", "#USING"], "parser_method": "_parse_pp_option"},
     {
       "name": "define",
       "parser_method": "_parse_define",

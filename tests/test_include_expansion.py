@@ -18,7 +18,7 @@ class IncludeExpansionTests(unittest.TestCase):
     def write(self, name, text):
         path = self.root / name
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(text, encoding="utf-8")
+        path.write_bytes(text.encode("utf-8"))
         return path
 
     def validate(self, text, *, strict=True):
@@ -72,6 +72,24 @@ class IncludeExpansionTests(unittest.TestCase):
             with self.subTest(text=text):
                 result = self.validate(text)
                 self.assertIn("validation.include.missing_file", {d.code for d in result.errors})
+
+    def test_only_expand_includes_in_plaintext_or_outside_a_wrapper(self):
+        self.write("defs", "LAYER M1 1\n")
+        self.write("more", "LAYER M2 2\n")
+        self.write("last", "LAYER M3 3\n")
+        source = (
+            "#ENCRYPT #ENDCRYPT\nINCLUDE defs\n"
+            "#DECRYPT\n|opaque #ENDCRYPT|\n#ENDCRYPT_extra\nINCLUDE missing\n#ENDCRYPT\n"
+            "#ENCRYPT\nINCLUDE more\n#INCLUDE last\n#ENDCRYPT\n"
+        )
+        result = self.validate(source)
+        self.assertValid(result)
+        empty, layer, opaque, plain = result.program.statements
+        self.assertEqual(["opaque", "opaque", "plaintext"],
+                         [block.parse_status for block in (empty, opaque, plain)])
+        self.assertEqual("M1", layer.name)
+        self.assertEqual(["M2", "M3"], [item.name for item in plain.body])
+        self.assertEqual("INCLUDE more\n#INCLUDE last", plain.content)
 
     def test_nested_semantic_diagnostic_preserves_original_location_and_stack(self):
         middle = self.write("mid", "INCLUDE leaf\n")
@@ -161,6 +179,20 @@ class IncludeExpansionTests(unittest.TestCase):
             with self.subTest(newline=newline):
                 text = newline.join(("VARIABLE WIDTH 0.1", "INCLUDE defs", "R { COPY M1 }", ""))
                 self.assertValid(validate_svrf(text, run_directory=self.root, strict=True))
+
+    def test_file_apis_keep_physical_offsets_in_plaintext_encrypted_includes(self):
+        content = "LAYER M1 1\r\nLAYER M2 2"
+        source = "/* first\r\n   second */\r\n#ENCRYPT\r\n" + content + "\r\n#ENDCRYPT\r\n"
+        child = self.write("definitions", source)
+        root = self.write("parent", "INCLUDE definitions\r\nR { COPY M2 }")
+        result = validate_svrf_file(root, strict=True, run_directory=self.root)
+        self.assertValid(result)
+        for block in (parse_file(child, strict=True).statements[0], result.program.statements[0]):
+            self.assertEqual(content, block.content)
+            layer = block.body[1]
+            self.assertEqual((5, 1), (layer.line, layer.col))
+            self.assertEqual(source.index("LAYER M2"), layer.start_offset)
+            self.assertEqual("LAYER M2 2", source[layer.start_offset:layer.end_offset])
 
     def test_variable_order_is_checked_across_include_boundaries(self):
         self.write("defs", "VARIABLE WIDTH 0.1\n")

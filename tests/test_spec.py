@@ -198,7 +198,7 @@ class SpecBootstrapTests(unittest.TestCase):
 
         schema = STATEMENT_SCHEMA_REGISTRY.match("top", ("POLYGON",), parse_kind="directive")
         self.assertIsNotNone(schema)
-        self.assertEqual(schema.parser_method, "_parse_directive")
+        self.assertEqual(schema.parser_method, "_parse_fixed_specification")
         self.assertEqual(schema.head_prefix, ("POLYGON",))
 
         schema = STATEMENT_SCHEMA_REGISTRY.match("rule", ("WHATEVER",), parse_kind="directive")

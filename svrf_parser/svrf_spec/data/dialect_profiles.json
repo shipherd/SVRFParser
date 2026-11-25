@@ -117,6 +117,16 @@
     },
     {
       "dialects": [
+        "DFM"
+      ],
+      "family": "local_svrf",
+      "name": "local_svrf",
+      "node_type": "LocalSvrf",
+      "support_level": "full",
+      "tags": []
+    },
+    {
+      "dialects": [
         "CORE"
       ],
       "family": "macro_definition",

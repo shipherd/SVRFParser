@@ -11,6 +11,7 @@ SVRF_NODE_TYPES = (
     ast.LayerAssignment,
     ast.Directive,
     ast.DfmSpec,
+    ast.LocalSvrf,
     ast.DfmClause,
     ast.PercLoad,
     ast.RuleCheckBlock,
