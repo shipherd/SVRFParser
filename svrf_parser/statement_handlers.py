@@ -3,9 +3,13 @@
 from __future__ import annotations
 
 from . import ast
+from .command_dictionary import STMT_STARTS, match_tokens
+from .keywords import _DIRECTIVE_HEADS
 from .exceptions import ParseError
 from .dfm_spec_parser import DfmSpecParserMixin, _DFM_MODES
+from .dfm_defaults import matches_defaults
 from .perc_parser import PercParserMixin
+from .ratio_clauses import RatioClauseParserMixin
 from .statement_schema import STATEMENT_SCHEMA_REGISTRY
 from .statement_shape_handlers import StatementShapeParserMixin
 from .tokens import TokenType
@@ -14,7 +18,7 @@ TT = TokenType
 NO_UNIT_DISPATCH = object()
 
 
-class StatementParserMixin(StatementShapeParserMixin, DfmSpecParserMixin, PercParserMixin):
+class StatementParserMixin(StatementShapeParserMixin, DfmSpecParserMixin, PercParserMixin, RatioClauseParserMixin):
     """Statement CST dispatch and concrete statement-family handlers."""
 
     def _consume_head_from_statement_cst(self, expected_prefix=None):
@@ -99,6 +103,43 @@ class StatementParserMixin(StatementShapeParserMixin, DfmSpecParserMixin, PercPa
         return NO_UNIT_DISPATCH
 
     def _parse_statement(self, mode):
+        if (mode in {"top", "macro"} and self._cur().type == TT.IDENT and self._cur().value in STMT_STARTS
+                and not self._segmenter.starts_assignment_at(self.pos) and not self._segmenter.starts_rule_check_at(self.pos, "top")):
+            hit = match_tokens(self.tokens, self.pos)
+            if hit and hit[0].route in {"closed", "statement"}:
+                return self._parse_dictionary_directive(*hit)
+        if mode == "ratio_clause":
+            if self._cur().type == TT.PREPROCESSOR:
+                return self._parse_ifdef(mode)
+            return self._parse_ratio_piece(self._ratio_piece_end(self.pos, True))
+        if mode in {"macro", "rule"} and self._at(TT.IDENT, "RDB") and not self._segmenter.starts_assignment_at(self.pos):
+            end = self._ratio_piece_end(self.pos, True)
+            if end > self.pos:
+                return self._parse_ratio_piece(end)
+        if mode == "macro" and self._at(TT.SYMBOL, "<"):
+            layers = []
+            while self._at(TT.SYMBOL, "<"):
+                end = self._segmenter.scan_name_end(self.pos + 1)
+                if end is None or self.tokens[end].value != ">":
+                    break
+                self._advance()
+                layers.append(self._parse_name())
+                self._advance()
+                self._skip_newlines()
+            if layers:
+                return ast.DeviceAuxLayers(layers)
+        if mode == "property" and (self._at(TT.SYMBOL, ",") or self._at(TT.IDENT, "PROPERTY")
+                                   or self._at(TT.IDENT, "HIDDEN") and self._peek().value == "PROPERTY"):
+            keyword = self._advance().value
+            if keyword == "HIDDEN":
+                self._advance()
+                keyword = "HIDDEN PROPERTY"
+            self._skip_newlines()
+            properties = [self._parse_name()]
+            while self._match(TT.SYMBOL, ","):
+                self._skip_newlines()
+                properties.append(self._parse_name())
+            return ast.PropertyDeclaration(keyword, properties)
         if self._at(TT.IDENT, "DFM") and self._peek().value == "SPEC":
             kind = self.tokens[self.pos+2].value
             if kind in {"VIA", "SVRF"}:
@@ -137,6 +178,54 @@ class StatementParserMixin(StatementShapeParserMixin, DfmSpecParserMixin, PercPa
         if closing_stmt is not NO_UNIT_DISPATCH:
             return closing_stmt
         return self._parse_unknown(mode)
+
+    def _parse_dictionary_directive(self, command, end):
+        start = self._cur()
+        head = command.name.split()
+        self.pos = end
+        values = []
+        while True:
+            i = self._next_non_newline_index(self.pos)
+            token = self.tokens[i]
+            if token.type in (TT.EOF, TT.PREPROCESSOR, TT.RULE_COMMENT) or (
+                    token.type == TT.SYMBOL and token.value in {"}", "]", ")", "{"}):
+                break
+            if self._segmenter.starts_assignment_at(i) or self._segmenter.starts_rule_check_at(i, "top"):
+                break
+            option = token.type == TT.IDENT and command.forms and any(
+                form[:len(values)+1] == (*values, token.value) for form in command.forms)
+            if command.name == "DFM DEFAULTS" and token.type in (TT.IDENT, TT.NUMBER, TT.STRING):
+                option = matches_defaults([*values, token.value], partial=True)
+            if (token.type == TT.IDENT and not option
+                    and (match_tokens(self.tokens, i) or self._segmenter.starts_line_statement_at(i))):
+                break
+            if i != self.pos and not option and len(values) >= command.min_args:
+                break
+            self.pos = i
+            if token.type == TT.SYMBOL and token.value in {"(", "["}:
+                depth = [")" if token.value == "(" else "]"]
+                self._advance()
+                while depth:
+                    t = self._cur()
+                    if t.type in (TT.EOF, TT.PREPROCESSOR) or (t.type == TT.SYMBOL and t.value in {"}", "{"}):
+                        raise ParseError("Unterminated directive argument", t.line, t.col, t)
+                    self._advance()
+                    if t.type == TT.SYMBOL and t.value in {"[", "("}:
+                        depth.append("]" if t.value == "[" else ")")
+                    elif t.type == TT.SYMBOL and t.value in {"]", ")"} and t.value != depth.pop():
+                        raise ParseError("Mismatched directive argument delimiter", t.line, t.col, t)
+                values.append(self._operation_clause(i, self.pos))
+            else:
+                values.append(self._parse_scalar_argument())
+        if command.route == "closed" and head[0] in _DIRECTIVE_HEADS:
+            # Keep the historic Directive keyword/argument split for existing consumers.
+            remaining = head[1:] + values
+            legacy = head[:1]
+            while remaining and type(remaining[0]) is str and remaining[0] in self._segmenter.config.directive_secondary_words:
+                legacy.append(remaining.pop(0))
+            if len(legacy) >= len(head):
+                head, values = legacy, remaining
+        return ast.Directive(keywords=head, arguments=values, **self._loc(start))
 
     def _handle_closing_delimiter_statement(self, token):
         if token.type != TT.SYMBOL or token.value not in {"}", "]", ")"}:

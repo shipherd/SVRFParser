@@ -33,6 +33,8 @@ SVRF_NODE_TYPES = (
 def is_svrf_construct(node):
     """Return True for top-level nodes that count toward SVRF corpus quality."""
 
+    if isinstance(node, ast.TvfScript):
+        return any(is_svrf_construct(statement) for statement in node.body)
     return isinstance(node, SVRF_NODE_TYPES)
 
 

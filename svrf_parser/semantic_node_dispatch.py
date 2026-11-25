@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 from . import ast
+from .command_dictionary import match_words
+from .dfm_defaults import matches_defaults
 from .semantic_dfm import validate_fill_shape
 from .semantic_directives import _DIRECTIVE_ALLOWED_ARGUMENT_COUNTS, _DIRECTIVE_MIN_ARGUMENTS
 from .semantic_drc_rules import (
@@ -67,7 +69,9 @@ def validate_semantic_node(validator, node, scope, pending):
             validator.error("semantic.include.empty_path", "INCLUDE path is empty", node)
         return
 
-    if isinstance(node, ast.EncryptedBlock):
+    if isinstance(node, ast.TvfScript) and node.parse_status != "literal":
+        validator.error("semantic.tvf.incomplete", "Cannot validate unevaluated TVF commands", node)
+    if isinstance(node, (ast.EncryptedBlock, ast.TvfScript)):
         if node.body:
             validator._push_statement_tasks(pending, node.body, scope)
         return
@@ -96,6 +100,7 @@ def validate_semantic_node(validator, node, scope, pending):
         return
 
     if isinstance(node, ast.Directive):
+        before = len(validator.diagnostics)
         keyword_tuple = tuple(node.keywords)
         min_args = _DIRECTIVE_MIN_ARGUMENTS.get(keyword_tuple)
         if min_args is not None and len(node.arguments) < min_args:
@@ -120,6 +125,21 @@ def validate_semantic_node(validator, node, scope, pending):
                 continue
             validator._validate_value(argument, scope)
         validator._validate_directive_arguments(node, scope)
+        if len(validator.diagnostics) == before:
+            words = [*node.keywords, *node.arguments]
+            match = match_words(words)
+            if match and len(words) - match[1] < match[0].min_args:
+                validator.error("semantic.directive.missing_argument",
+                                f"{match[0].name} requires at least {match[0].min_args} argument(s)", node)
+            elif match and match[0].name == "DFM DEFAULTS" and not matches_defaults(words[match[1]:]):
+                validator.error("semantic.directive.invalid_value", "Invalid options for DFM DEFAULTS", node)
+            if match and match[0].forms is not None:
+                cmd, end = match
+                args = tuple(w.upper() if type(w) is str else None for w in words[end:])
+                if args not in cmd.forms:
+                    code = ("missing_argument" if not args else
+                            "argument_shape" if not any(len(f) == len(args) for f in cmd.forms) else "invalid_value")
+                    validator.error("semantic.directive." + code, f"Invalid arguments for {cmd.name}", node)
         if keyword_tuple == ("LVS", "GROUND", "NAME"):
             scope.define_placeholder("LVS_GROUND_NAME")
         elif keyword_tuple == ("LVS", "POWER", "NAME"):
@@ -372,8 +392,8 @@ def validate_semantic_node(validator, node, scope, pending):
             if not any(isinstance(m, tuple) and m[0] == "RDB" and isinstance(m[1], ast.StringLiteral) and m[1].value
                        for m in node.modifiers):
                 validator.error("semantic.drc.missing_modifier", "DFM DV ANALYZE requires RDB and a filename", node)
-        if node.op in {"MAGNIFY", "DEANGLE", "SNAP"}:
-            values = (node.modifier_nodes[0].value,) if node.op == "MAGNIFY" and node.modifiers else node.operands[1:]
+        if node.op in {"MAGNIFY", "EXPAND TEXT", "DEANGLE", "SNAP"}:
+            values = (node.modifier_nodes[0].value,) if node.op in {"MAGNIFY", "EXPAND TEXT"} and node.modifiers else node.operands[1:]
             for value in values:
                 if isinstance(value, ast.NumberLiteral) and (
                     value.value <= 0 or (node.op == "SNAP" and isinstance(value.value, float) and not value.value.is_integer())
@@ -428,9 +448,10 @@ def validate_semantic_node(validator, node, scope, pending):
                 node,
             )
         op_scope = scope
-        if node.op in {"DFM PROPERTY", "DFM PROPERTY NET", "DFM TEXT"}:
+        property_op = node.op == "DFM PROPERTY" or node.op.startswith("DFM PROPERTY ")
+        if property_op or node.op == "DFM TEXT":
             op_scope = scope.child()
-        if node.op in {"DFM PROPERTY", "DFM PROPERTY NET"}:
+        if property_op:
             for name in _collect_property_modifier_placeholders(node.modifiers):
                 op_scope.define_placeholder(name)
             for name in _collect_property_function_source_placeholders(

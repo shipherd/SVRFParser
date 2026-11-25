@@ -7,14 +7,15 @@ can evolve independently from expression parsing.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
+from .keywords import _CONNECT_OPTIONS
+from .name_syntax import NAME_PART_TYPES as _NAME_PART_TYPES, name_from_span, name_part_value, scan_name_end
 from .statement_cst import PropertyBlockHeader, RuleCheckHeader, StatementCst, StatementHead
 from .statement_schema import STATEMENT_SCHEMA_REGISTRY
 from .tokens import Token, TokenType
 
 TT = TokenType
-_NAME_PART_TYPES = (TT.IDENT, TT.STRING, TT.NUMBER)
 
 
 @dataclass(frozen=True, slots=True)
@@ -34,6 +35,7 @@ class SegmenterConfig:
     prefix_boolean_ops: frozenset[str]
     group_continuation_keywords: frozenset[str]
     measurement_ops: frozenset[str] = frozenset()
+    infix_words: frozenset[str] = frozenset()
 
 
 @dataclass(frozen=True, slots=True)
@@ -158,6 +160,12 @@ class StatementSegmenter:
         if next_idx >= self.length:
             return False
         nxt = self.tokens[next_idx]
+        if nxt.type == TT.IDENT and (self.starts_assignment_at(next_idx) or self.starts_rule_check_at(next_idx, "top")):
+            return False
+        if nxt.type == TT.IDENT and nxt.value in self.config.modifier_starters:
+            following = self._token_at(next_idx + 1)
+            if following.type == TT.IDENT and following.value in self.config.infix_words:
+                return False
         if nxt.type == TT.IDENT and nxt.value == "LAYER":
             name = self._token_at(next_idx + 1)
             end = self.scan_name_end(next_idx + 1)
@@ -178,8 +186,12 @@ class StatementSegmenter:
             return False
         next_idx = self.next_non_newline_index(idx + 1)
         operand = self._token_at(next_idx)
+        if token.value == "DFM" and operand.type == TT.IDENT and operand.value != "SPEC":
+            return True
         if token.value == "RECTANGLE" and operand.type == TT.IDENT and operand.value == "ENCLOSURE":
             return True
+        if token.value in {"CONVEX", "EXPAND"} and operand.type == TT.IDENT and operand.value == "EDGE":
+            return self.can_start_expression_token(self._token_at(self.next_non_newline_index(next_idx + 1)))
         if token.value == "WITH" and operand.type == TT.IDENT and operand.value in {"TEXT", "WIDTH", "EDGE", "NEIGHBOR"}:
             next_idx = self.next_non_newline_index(next_idx + 1)
             operand = self._token_at(next_idx)
@@ -202,6 +214,30 @@ class StatementSegmenter:
             and not self.starts_statement_at(next_idx, mode)
             and not self.starts_operation_at(next_idx)
         )
+
+    def continues_copy_input(self, newline_idx):
+        i = self.next_non_newline_index(newline_idx + 1)
+        t = self._token_at(i)
+        if self.starts_line_statement_at(i) or self.starts_operation_at(i):
+            return False
+        end = self.scan_name_end(i)
+        if end is None:
+            if t.type != TT.SYMBOL or t.value != "(":
+                return False
+            depth = 1
+            end = i + 1
+            while depth:
+                token = self._token_at(end)
+                if token.type in (TT.EOF, TT.PREPROCESSOR, TT.RULE_COMMENT):
+                    return False
+                if token.type == TT.SYMBOL:
+                    if token.value in {"{", "}"}:
+                        return False
+                    depth += (token.value == "(") - (token.value == ")")
+                end += 1
+        following = self._token_at(end)
+        return not (following.type == TT.IDENT and
+                    (following.value in self.config.expression_operator_words or following.value == "NOT"))
 
     def property_header_newline_action(self, newline_idx, stop_preprocessors=None):
         stop_preprocessors = set(stop_preprocessors or ())
@@ -226,6 +262,8 @@ class StatementSegmenter:
         if nxt.type == TT.SYMBOL and nxt.value in {"?", ":"}:
             return True
         if nxt.type == TT.SYMBOL and nxt.value in {"[", "("}:
+            if nxt.value == "(" and prev_idx > 0 and prev.value == "NET" and self._token_at(prev_idx - 1).value == "BY":
+                return False
             return self.token_allows_group_continuation(prev)
         if prev is not None:
             if (
@@ -253,41 +291,17 @@ class StatementSegmenter:
             and nxt.value in self.config.modifier_starters
             and not self.starts_line_statement_at(next_idx)
             and not self.starts_operation_at(next_idx)
+            and not (self._token_at(next_idx + 1).type == TT.IDENT and
+                     self._token_at(next_idx + 1).value in self.config.infix_words)
         ):
             return True
         return False
 
     def scan_name_end(self, idx):
-        if idx >= self.length or self.tokens[idx].type not in _NAME_PART_TYPES:
-            return None
-        while True:
-            idx = self.next_non_newline_index(idx + 1)
-            if idx >= self.length:
-                return idx
-            token = self.tokens[idx]
-            if token.type != TT.SYMBOL or token.value not in {":", "::"}:
-                return idx
-            idx = self.next_non_newline_index(idx + 1)
-            if idx >= self.length or self.tokens[idx].type not in _NAME_PART_TYPES:
-                return None
-
-    def _name_part_value(self, token):
-        if token.type == TT.IDENT:
-            raw = token.raw if token.raw is not None else token.value
-            return str(raw).upper()
-        if token.type == TT.STRING:
-            return token.value
-        if token.type == TT.NUMBER:
-            return str(token.raw)
-        return None
+        return scan_name_end(self.tokens, idx, self.length)
 
     def _name_from_span(self, start, end):
-        if end == start + 1:
-            return self._name_part_value(self.tokens[start])
-        return "".join(
-            token.value if token.type == TT.SYMBOL else self._name_part_value(token)
-            for token in self.tokens[start:end] if token.type != TT.NEWLINE
-        )
+        return name_from_span(self.tokens, start, end)
 
     def scan_name(self, idx):
         end = self.scan_name_end(idx)
@@ -324,7 +338,7 @@ class StatementSegmenter:
             body_start = self.next_non_newline_index(next_idx + 1)
             return RuleCheckHeader(name=first.value, body_start=body_start)
 
-        part = self._name_part_value(first)
+        part = name_part_value(first)
         if part is None:
             return None
 
@@ -347,7 +361,7 @@ class StatementSegmenter:
             if token.type == TT.SYMBOL and token.value in {":", "::"}:
                 parts.append(token.value)
             else:
-                part = self._name_part_value(token)
+                part = name_part_value(token)
                 if part is None:
                     return None
                 parts.append(part)
@@ -387,18 +401,13 @@ class StatementSegmenter:
                 idx += 1
                 continue
             if token.type == TT.PREPROCESSOR:
-                if token.value in stop_preprocessors:
-                    return PropertyBlockHeader(properties=tuple(properties), body_start=idx)
-                idx += 1
-                while idx < self.length and self.tokens[idx].type not in (TT.EOF, TT.NEWLINE):
-                    idx += 1
-                continue
+                return PropertyBlockHeader(properties=tuple(properties), body_start=idx)
             if token.type == TT.SYMBOL and token.value == ",":
                 expecting_name = True
                 idx += 1
                 continue
             if expecting_name:
-                part = self._name_part_value(token)
+                part = name_part_value(token)
                 if part is not None:
                     properties.append(part)
                     expecting_name = False
@@ -511,7 +520,8 @@ class StatementSegmenter:
         stop_symbols = cache_key[2]
         stop_preprocessors = cache_key[3]
         idx = start_idx
-        head_kind, _head_value = self._classify_head(start_idx, mode)
+        head_kind, head_value = self._classify_head(start_idx, mode)
+        connectivity = head_kind == "statement_head" and head_value in {"CONNECT", "SCONNECT"}
         consumed = False
         suppress_same_line_break = False
         paren_depth = 0
@@ -526,6 +536,17 @@ class StatementSegmenter:
 
             if consumed and depth_zero:
                 if token.type == TT.NEWLINE:
+                    if connectivity:
+                        following = self.next_non_newline_index(idx + 1)
+                        nxt = self._token_at(following)
+                        prev = self.tokens[idx - 1]
+                        continues = ((nxt.type == TT.IDENT and nxt.value in _CONNECT_OPTIONS) or
+                                     (prev.type == TT.IDENT and prev.value in _CONNECT_OPTIONS and nxt.type in _NAME_PART_TYPES))
+                        idx = following
+                        if continues and not self.starts_line_statement_at(idx):
+                            suppress_same_line_break = True
+                            continue
+                        break
                     if head_kind == "directive" and self.continues_directive_across_newline(idx):
                         idx = self.next_non_newline_index(idx + 1)
                         suppress_same_line_break = True
@@ -739,6 +760,14 @@ class StatementSegmenter:
             value = token.value if token.type in (TT.IDENT, TT.PREPROCESSOR, TT.SYMBOL) else None
             return ("next_statement", value)
         return ("unknown", token.value if hasattr(token, "value") else None)
+
+    def recovery_span(self, statement, consumed_end, stop_symbols, stop_preprocessors):
+        """A family can own a continuation beyond the initial statement estimate."""
+        end = self.next_non_newline_index(consumed_end)
+        if end <= statement.end:
+            return statement
+        kind, value = self._classify_boundary(end, statement.mode, stop_symbols, stop_preprocessors)
+        return replace(statement, end=end, boundary_kind=kind, boundary_value=value, continued_across_newline=True)
 
     def _continued_across_newline(self, statement_slice):
         for idx in range(statement_slice.start, statement_slice.end):

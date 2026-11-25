@@ -7,6 +7,7 @@ import re
 from .exceptions import LexerError
 from .keywords import _KEYWORD_ALIASES
 from .tokens import Token, TokenType
+from .tvf import is_tvf_script
 
 TT = TokenType
 
@@ -71,7 +72,7 @@ def encrypted_payload_end(text, start):
 class Lexer:
     """Tokenizer for SVRF source text."""
 
-    def __init__(self, text, filename="<input>", *, recover_invalid=False):
+    def __init__(self, text, filename="<input>", *, recover_invalid=False, _svrf_only=False):
         self.text = text or ""
         self.filename = filename
         self._recover_invalid = recover_invalid
@@ -80,7 +81,12 @@ class Lexer:
         self.line = 1
         self.col = 1
         self._tokens = []
-        self._tokenize()
+        if not _svrf_only and is_tvf_script(self.text):
+            self._advance(self.text)
+            self._append_token(TT.TVF_SCRIPT, self.text, 1, 1, 0)
+            self._append_token(TT.EOF, "", self.line, self.col, self.pos)
+        else:
+            self._tokenize()
 
     def tokens(self):
         return self._tokens

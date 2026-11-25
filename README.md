@@ -65,15 +65,38 @@ print([s.name for s in result.program.statements if hasattr(s, "name")])
 | --- | --- |
 | Rule and layer names | Compact colons, numeric components, and quoted names remain part of the name. Rule descriptions retain text and `^VARIABLE` references. |
 | `LAYER MAP` | Exact selectors are integers; ranged `gds_num` and `type_num` selectors are lists of `Constraint` nodes. `internal_num` is the target layer; `target_texttype` is `None` unless supplied. |
-| DRC and geometry | `INTERNAL`, `EXTERNAL`, and `ENCLOSURE` normalize to `INT`, `EXT`, and `ENC`. Required constraints are checked. `EXPAND EDGE`, `GROW`, and `SHRINK` keep directional distances separate from a following parenthesized layer. `WITH EDGE` can place its count before the second layer. |
-| Connectivity and devices | `CONNECT` has a 32-layer limit. `SCONNECT` keeps quoted `LINK` names and `ABUT ALSO`. `Device` separates pins and swap lists from `BY NET`/`BY SHAPE`, netlist options, text layers, signatures, and templates. |
+| DRC and geometry | `INTERNAL`, `EXTERNAL`, and `ENCLOSURE` normalize to `INT`, `EXT`, and `ENC`. `GROW`, `SHRINK`, and `EXPAND EDGE` can take their layer operand on the line after a directional distance; once the layer is present, a separate parenthesized expression stays separate. `WITH EDGE` can place its count before the second layer. |
+| Connectivity and devices | `CONNECT` and `SCONNECT` preserve ordered layer names, including quoted and qualified names. For example, `CONNECT M1 "wire B" BY V1` has two layers and a via. `SCONNECT` also preserves `LINK` and `ABUT ALSO`; option arguments can continue on the next line. `CONNECT` has a 32-layer limit. `Device` separates pins, swap lists, connection modes, netlist options, text layers, signatures, and templates. |
 | Preprocessor and macros | `#UNDEFINE` retires definitions on the relevant branch. Standalone and inline `CMACRO`/`FMACRO` calls are checked against reachable definitions, including arity and recursion. `FMACRO` requires `#USING KEYWORD FMACRO`. Device macro calls may have trailing device arguments. Calls are not expanded. |
 | DFM specifications | `DfmSpec` and `DfmClause` retain ordered fill, spacing, optimization, and VIA clauses; `DFM SPEC VIA` keeps `VIASHAPE`, `ENC1`, and `ENC2` dimensions. `DFM MAT` retains its continuation clauses. `DFM DV ANALYZE` requires an input layer and an `RDB` filename. |
 | Local SVRF | `DFM SPEC SVRF` produces `LocalSvrf` with input names and `NODAL` flags, outputs, numeric variable defaults, parsed body, and `wrapped`/`center` flags. Visible outer variables are inherited, but unrelated outer layers are not; names defined inside do not leak out. |
 | TVF and PERC | The final argument of a `TVF FUNCTION` directive is the original bracketed Tcl script, including line endings. `PERC LOAD` retains case-sensitive procedure names and parallel groups. Neither executes Tcl. |
 | Protected blocks | `EncryptedBlock` preserves its opener (`#ENCRYPT` or `#DECRYPT`) and payload. `parse_status` distinguishes `plaintext`, `partial` (recognizable declarations with recovery), and `opaque`. Only confidently parsed plaintext can contribute includes. |
 
-Other supported forms include Boolean and spatial layer expressions, measurements, variables and scalar arithmetic, property blocks, and common layout, DRC, LVS, ERC, and PEX directives. `RESOLUTION` requires positive integers. `DRCOp.modifiers` retains the list representation; `modifier_nodes` provides typed views. Recognition of a keyword does not imply that every option combination or its geometric effect is validated. Whole `#!tvf` scripts and dynamically generated SVRF are outside scope.
+`DFM COPY` accepts input lists across lines without relying on indentation. In `NET AREA RATIO`, conditional `ACCUMULATE` and `RDB` fragments remain inside the operation as `IfDef` and `OperationClause` nodes, rather than becoming independent checks. Parenthesized `DFM DP` argument groups retain their position without claiming to validate multi-patterning options. Device argument macros preserve `DeviceAuxLayers`, conditional property names, and `HIDDEN PROPERTY` declarations. A missing closing property bracket is diagnosed without dropping the macro or the next statement.
+
+For a file beginning with `#!tvf`, a `TvfScript` node retains the full script in `content`. Its `body` contains the SVRF from consecutive, literal, top-level `tvf::VERBATIM { ... }` commands before the first command that needs Tcl evaluation. Only the extracted SVRF can supply includes. `parse_status` is `literal`, `partial`, or `opaque`. Recovery reports where static parsing stopped; strict parsing rejects a remaining Tcl command and validation does not certify a partial script. Printing the wrapper preserves its source text. No Tcl or macros are executed.
+
+Other supported forms include Boolean and spatial layer expressions, measurements, variables and scalar arithmetic, and common layout, DRC, LVS, ERC, and PEX directives. `PATHCHK` can take a flag expression, an optional layer, and selection options such as `PORTS ALSO`. `RESOLUTION` requires positive integers. `DRCOp.modifiers` retains its list representation; `modifier_nodes` provides typed views. Recognizing a keyword does not imply validation of every option or its geometric effect.
+
+### Reference dictionary
+
+The [packaged dictionary](svrf_parser/svrf_spec/data/command_dictionary.json) indexes 829 reference topics. Local usage lines describe 760 distinct primary commands across 771 topics. The parser distinguishes longer commands from their prefixes: for example, `DFM PATTERN MATCH` is a layer operation and `DFM PATTERN MATCH REPORT` is a specification statement.
+
+- Validation checks all 335 literal alternatives of 162 closed-choice commands. For another 224 distinct commands the dictionary identifies a mandatory positional prefix; this is a lower bound, not a complete grammar for their remaining arguments. Specialized parsers and validators handle additional rules separately.
+- `NET INTERACT A B > 1` and `A NET INTERACT B > 1` have the same two layer operands and required constraint. In `EXPAND TEXT ? LABELS BY 2*STEP`, the question mark is a text pattern, not a ternary operator. The optional layer, distance expression, `PRIMARY ONLY`, and `CASE SENSITIVE` are preserved.
+- `DFM DEFAULTS` retains the operation selector and options together. Validation distinguishes ordinary RDB defaults from GDS/OASIS, fill, and DV defaults. Both `DFM SPEC VIA REDUNDANCY` and `DFM SPEC VIA REDUNDANCY COUNT` return a `DfmSpec` with ordered clauses. Connectivity rows are preserved as syntax fragments; delimiters and target-marker placement are checked, not electrical connectivity.
+- The other 58 topics have no local usage line. Some refer to syntax covered elsewhere; a cross-reference is not treated as a grammar. In particular, detailed product-specific DFM DP option validation is not inferred from its name.
+
+For example, the parser preserves the full `DFM PATTERN MATCH` and `DRC EXECUTE LUP_GROW` operation names, but does not enforce every pattern option or every keyword/value position in those operations. A successful strict parse of either is not certification that Calibre would accept it.
+
+To reproduce the inventory against an extracted reference without writing a report:
+
+```sh
+python -B coverage_analysis.py reference/toc.json --check-manual --no-write
+```
+
+With `SVRF_MANUAL_ROOT` set, the test suite also parses 23 standalone worked examples directly from the local HTML. Set `SVRF_NATIVE_EXE` to a built C CLI to compare their ASTs. Report output and SPICE netlists on the same pages are not SVRF inputs.
 
 ## Source locations and privacy
 
@@ -87,7 +110,9 @@ ASTs and diagnostics normally contain source data. Omitting positions with `tree
 python -B -m unittest discover -s tests -t . -q
 ```
 
-The current suite discovers **761 tests**. Without external inputs, three corpus integration tests and one manual-inventory check skip. To enable them, point `SVRF_SAMPLES_DIR` at a deck or directory of valid decks, and `SVRF_MANUAL_ROOT` at the extracted SVRF User's Reference directory containing `topics.json` and `toc.json`. The manual and decks are not bundled. The C project provides an optional differential suite comparing ASTs, strict parse outcomes, round trips, diagnostics, and dialect profiles; it is not a Calibre execution test.
+Corpus and manual-inventory tests skip without their external inputs; development-helper tests can also skip in a standalone checkout. To enable the input-based tests, point `SVRF_SAMPLES_DIR` at a deck or directory of valid decks, and `SVRF_MANUAL_ROOT` at the extracted SVRF User's Reference directory containing `topics.json` and `toc.json`. The manual and decks are not bundled. The C project provides an optional differential suite comparing ASTs, strict parse outcomes, round trips, diagnostics, and dialect profiles; it is not a Calibre execution test.
+
+The [corpus report](BENCHMARK.md) separates historical timings from the current 189-file summary comparison and the 15-file full-AST audit. A matching rule count is not proof that the contents of every rule match.
 
 ### Checking a deck or directory
 

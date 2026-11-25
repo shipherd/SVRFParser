@@ -173,6 +173,18 @@ class ParserCursorMixin:
             return None
         return token
 
+    def _operation_clause(self, start, end):
+        parts = []
+        previous = None
+        for token in self.tokens[start:end]:
+            if token.type == TT.NEWLINE:
+                continue
+            if previous is not None and previous.end_offset != token.offset:
+                parts.append(" ")
+            parts.append(str(token.raw))
+            previous = token
+        return self._finish_node(ast.OperationClause("".join(parts)), start, end)
+
     def _finish_node(self, node, start_idx, end_idx=None):
         if node is None or not isinstance(node, ast.AstNode):
             return node

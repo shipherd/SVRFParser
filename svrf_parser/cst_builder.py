@@ -11,6 +11,10 @@ from .clause_cst import (
     ScalarClause,
     StatementClauseCst,
 )
+from .exceptions import ParseError
+from .keywords import _CONNECT_OPTIONS
+from .modifiers import QuotedScalar
+from .name_syntax import name_from_span, scan_name_end
 from .statement_cst import StatementCst
 from .tokens import TokenType
 
@@ -35,8 +39,6 @@ _GENERIC_MODIFIER_STARTERS = frozenset(
     }
 )
 _PARSE_KIND_MODIFIER_STARTERS = {
-    "connect": frozenset({"BY", "LINK", "ABUT"}),
-    "sconnect": frozenset({"BY", "LINK", "ABUT"}),
     "device": frozenset({"CMACRO", "ELEMENT", "LAYER", "NETLIST", "PIN", "PORT", "PROPERTY"}),
     "trace_property": frozenset({"PROPERTY"}),
 }
@@ -53,7 +55,9 @@ class ClauseCstBuilder:
         body_end = self._body_end(statement_cst, body_start)
 
         parse_kind = self._parse_kind(statement_cst)
-        if parse_kind in {"rule_check", "property_block"}:
+        if parse_kind in {"connect", "sconnect"}:
+            body_clauses = tuple(self._connect_clauses(body_start, body_end))
+        elif parse_kind in {"rule_check", "property_block"}:
             body_clauses = self._build_block_body_clauses(
                 parse_kind,
                 body_start,
@@ -73,6 +77,37 @@ class ClauseCstBuilder:
             header_clauses=tuple(header_clauses),
             body_clauses=tuple(body_clauses),
         )
+
+    def _connect_clauses(self, start, end):
+        idx = self._next_non_newline_index(start)
+        run_start, layers = idx, []
+        while idx < end:
+            token = self.tokens[idx]
+            option = token.value if token.type == TT.IDENT and token.value in _CONNECT_OPTIONS else None
+            if option and layers:
+                yield OperandClause(run_start, idx, tuple(layers))
+                layers = []
+            argument = self._next_non_newline_index(idx + 1) if option else idx
+            if option == "ABUT":
+                if argument >= end or self.tokens[argument].type != TT.IDENT or self.tokens[argument].value != "ALSO":
+                    raise ParseError("Expected ALSO after ABUT", token.line, token.col, token)
+                yield ModifierClause(idx, argument + 1, ("ABUT", "ALSO"))
+                idx = self._next_non_newline_index(argument + 1)
+                continue
+            following = scan_name_end(self.tokens, argument, end)
+            if following is None:
+                bad = self.tokens[argument] if argument < end else token
+                raise ParseError("Expected a name", bad.line, bad.col, bad)
+            name = name_from_span(self.tokens, argument, following)
+            if option:
+                yield ModifierClause(idx, following, (option, name))
+            else:
+                if not layers:
+                    run_start = idx
+                layers.append(name)
+            idx = following
+        if layers:
+            yield OperandClause(run_start, idx, tuple(layers))
 
     def _build_header_clauses(self, statement_cst):
         if statement_cst.head is not None:
@@ -243,7 +278,7 @@ class ClauseCstBuilder:
                 idx += 1
                 continue
             if token.type in {TT.NUMBER, TT.STRING}:
-                values.append(token.value)
+                values.append(QuotedScalar(token.value) if token.type == TT.STRING else token.value)
                 idx += 1
                 continue
             if token.type == TT.SYMBOL and token.value in _SCALAR_SYMBOLS:

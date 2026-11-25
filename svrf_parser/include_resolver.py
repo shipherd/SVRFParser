@@ -9,6 +9,7 @@ from pathlib import Path
 
 from . import ast
 from .exceptions import LexerError, ParseError
+from .tvf import is_tvf_script, tvf_prefix
 from .lexer import Lexer, encrypted_payload_end, tvf_body_span
 from .include_syntax import EMBEDDED_INCLUDE_HEADS
 from .parser import Parser, SVRFParseError
@@ -181,6 +182,11 @@ _SOURCE_EVENT = re.compile(
 def _source_events(source, start, end, include_in_block_comments):
     text = source.text
     if not _POSSIBLE_EVENT.search(text, start, end):
+        return
+    if start == 0 and is_tvf_script(text):
+        for kind, begin, stop in tvf_prefix(text):
+            if kind == "literal":
+                yield from _source_events(source, begin, stop, include_in_block_comments)
         return
     while match := _SOURCE_EVENT.search(text, start, end):
         start = match.end()

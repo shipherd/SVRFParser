@@ -891,10 +891,9 @@ class ValidationTests(unittest.TestCase):
         self.assertFalse(result.valid)
         self.assertIn("semantic.device_layer.missing_modifier", {diag.code for diag in result.errors})
 
-    def test_validate_reports_missing_pathchk_modifier(self):
+    def test_validate_pathchk_options_are_optional(self):
         result = validate_svrf("RULE1 {\n  PATHCHK POWER\n}\n", strict=True)
-        self.assertFalse(result.valid)
-        self.assertIn("semantic.drc.missing_modifier", {diag.code for diag in result.errors})
+        self.assertTrue(result.valid, result.error_messages)
 
     def test_validate_file_follows_include_for_macro_resolution(self):
         result = validate_svrf_file(FIXTURES / "root_with_macro_include.svrf", run_directory=FIXTURES)

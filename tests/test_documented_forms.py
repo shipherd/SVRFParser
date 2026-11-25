@@ -3,7 +3,8 @@ import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
-from svrf_parser import parse, validate_svrf, validate_svrf_file
+from svrf_parser import parse, parse_with_diagnostics, validate_svrf, validate_svrf_file
+from svrf_parser.exceptions import ParseError
 from svrf_parser.printer import SvrfPrinter
 
 
@@ -68,6 +69,72 @@ class DocumentedForms(unittest.TestCase):
             self.assertEqual(codes(text), [])
         nodes, _ = self.roundtrip(defs + "RESULT = GROW (INTERACT A (OR A B)) LEFT BY GAP")
         self.assertEqual(len(nodes[-1].expression.operands[0].operands), 2)
+
+    def test_directional_operand_on_following_line(self):
+        for op, direction in (("GROW", "TOP"), ("SHRINK", "BOTTOM"), ("EXPAND EDGE", "OUTSIDE")):
+            with self.subTest(op=op):
+                prefix = f"OUT = {op} {direction} BY 2"
+                nodes, _ = self.roundtrip(prefix + "\n  (A OR B)\nLAYER NEXT 4")
+                self.assertEqual([node.name for node in nodes], ["OUT", "NEXT"])
+                self.assertEqual(nodes[0].source_text, prefix + "\n  (A OR B)")
+                expr = nodes[0].expression
+                self.assertEqual((expr.op, len(expr.operands)), (op, 1))
+                arg = expr.operands[0]
+                self.assertEqual((arg.op, arg.left.name, arg.right.name), ("OR", "A", "B"))
+                self.assertEqual((expr.modifiers[0], expr.modifiers[1][1].value), (direction, 2))
+
+    def test_complete_geometry_leaves_following_expression_alone(self):
+        nodes, _ = self.roundtrip("CHECK_W {\nGROW A TOP BY 2\n(B OR C)\n}\nLAYER NEXT 4")
+        self.assertEqual([node.name for node in nodes], ["CHECK_W", "NEXT"])
+        grow, separate = nodes[0].body
+        self.assertEqual((grow.op, grow.operands[0].name, separate.op), ("GROW", "A", "OR"))
+
+    def test_connect_name_roles(self):
+        for op in ("CONNECT", "SCONNECT"):
+            with self.subTest(op=op):
+                text = (op + ' M1 "wire B" MASK "BY" "TVF" "INCLUDE" LIB::M2\n  BY "LAYER"'
+                        + (' LINK "rail A" ABUT ALSO' if op == "SCONNECT" else "")
+                        + "\nLAYER NEXT 4")
+                nodes, _ = self.roundtrip(text)
+                item, following = nodes
+                self.assertEqual(item.layers, ["M1", "wire B", "MASK", "BY", "TVF", "INCLUDE", "LIB::M2"])
+                self.assertEqual((item.via_layer, following.name), ("LAYER", "NEXT"))
+                self.assertEqual(item.link_name, "rail A" if item.soft else None)
+                self.assertEqual(item.abut_also, op == "SCONNECT")
+
+    def test_split_options_keep_their_arguments(self):
+        item, following = self.roundtrip(
+            'SCONNECT A "wire B"\n BY\n "via A"\n LINK\n "Net" ABUT\n ALSO\nLAYER NEXT 4'
+        )[0]
+        self.assertEqual((item.layers, item.via_layer, item.link_name, item.abut_also, following.name),
+                         (["A", "wire B"], "via A", "Net", True, "NEXT"))
+        out, following = self.roundtrip("OUT = EXPAND EDGE OUT BY FACTOR\n2\n (A OR B)\n CORNER\n FILL\nLAYER NEXT 4")[0]
+        op = out.expression
+        self.assertEqual((op.operands[0].op, op.modifiers[1][0], op.modifiers[-1], following.name),
+                         ("OR", "BY FACTOR", "CORNER FILL", "NEXT"))
+
+    def test_missing_arguments_do_not_consume_next_declaration(self):
+        for statement in ("CONNECT A B\n BY", "SCONNECT A B ABUT", "OUT = GROW TOP BY",
+                          "OUT = GROW TOP BY 1\n (A OR B)\n BOTTOM BY",
+                          "OUT = EXPAND EDGE OUT BY 2\n (A OR B)\n EXTEND BY FACTOR"):
+            with self.subTest(statement=statement):
+                src = statement + "\nLAYER NEXT 4"
+                tree, diagnostics = parse_with_diagnostics(src)
+                error, following = tree.statements
+                self.assertEqual([d.code for d in diagnostics], ["parser.parse_error"])
+                self.assertNotIn("NEXT", error.skipped_text)
+                self.assertEqual(following.name, "NEXT")
+                with self.assertRaises(ParseError):
+                    parse(src, strict=True)
+
+    def test_pending_geometry_stops_at_rule_and_conditional(self):
+        src = "OUT = GROW TOP BY 2\nCHECK_X { COPY B }\nLAYER NEXT 4"
+        out, rule, following = parse(src, strict=True).statements
+        self.assertEqual((out.expression.operands, rule.name, following.name), ([], "CHECK_X", "NEXT"))
+        branch, following = parse("#IFDEF TEST\nOUT = GROW TOP BY 2\n#ELSE\nOUT = COPY A\n#ENDIF\nLAYER NEXT 4",
+                                  strict=True).statements
+        self.assertEqual((branch.then_body[0].expression.operands, branch.else_body[0].expression.op,
+                          following.name), ([], "COPY", "NEXT"))
 
     def test_tvf(self):
         script = '[/*\r\nproc demo {} { return "[OK]" }\r\n*/]'

@@ -7,7 +7,8 @@ Not intended to reproduce original formatting exactly, only semantic equivalence
 import re
 
 from . import ast_nodes as ast
-from .modifiers import NamedModifier, as_modifier
+from .keywords import _CONNECT_RESERVED_NAMES
+from .modifiers import NamedModifier, QuotedScalar, as_modifier
 
 
 class SvrfPrinter:
@@ -45,6 +46,18 @@ class SvrfPrinter:
         for stmt in node.statements:
             lines.append(self.emit(stmt))
         return '\n'.join(lines)
+
+    def _emit_DeviceAuxLayers(self, node):
+        return " ".join(f"<{self._name(name)}>" for name in node.layers)
+
+    def _emit_PropertyDeclaration(self, node):
+        return node.keyword + " " + ", ".join(map(self._name, node.properties))
+
+    def _emit_OperationClause(self, node):
+        return node.text
+
+    def _emit_TvfScript(self, node):
+        return node.content
 
     # ---- Preprocessor ----
 
@@ -103,7 +116,7 @@ class SvrfPrinter:
         parts = ["DFM SPEC " + node.kind]
         if node.variant:
             parts.append(node.variant)
-        parts.append(self._name(node.name))
+        parts.append(self._quote(node.name) if (node.kind, node.variant) == ("VIA", "REDUNDANCY COUNT") else self._name(node.name))
         parts.extend(self.emit(argument) for argument in node.arguments)
         return '\n'.join([' '.join(parts)] + [self.emit(clause) for clause in node.body])
 
@@ -143,12 +156,16 @@ class SvrfPrinter:
                 parts.append('\n' + self.emit(a))
                 continue
             if isinstance(a, ast.AstNode):
-                parts.append(self.emit(a))
+                value = self.emit(a)
+                parts.append("(" + value + ")" if isinstance(a, ast.Expression) and
+                             not isinstance(a, (ast.UnaryOp, ast.StringLiteral)) else value)
             elif isinstance(a, str):
                 if is_description:
                     # Description text is not quoted
                     parts.append(a)
-                elif a != a.upper() or ' ' in a or '.' in a or '/' in a or '\\' in a:
+                elif not isinstance(a, QuotedScalar) and a.startswith("[") and a.endswith("]"):
+                    parts.append(a)
+                elif isinstance(a, QuotedScalar) or a != a.upper() or ' ' in a or '.' in a or '/' in a or '\\' in a:
                     parts.append(self._quote(a))
                 else:
                     parts.append(a)
@@ -189,11 +206,16 @@ class SvrfPrinter:
 
     # ---- Connectivity ----
 
+    def _connect_name(self, name):
+        if name in _CONNECT_RESERVED_NAMES:
+            return self._quote(name)
+        return self._name(name)
+
     def _emit_Connect(self, node):
         keyword = "SCONNECT" if node.soft else "CONNECT"
-        parts = [keyword] + [self._name(layer) for layer in node.layers]
-        if node.via_layer:
-            parts.extend(["BY", self._name(node.via_layer)])
+        parts = [keyword] + [self._connect_name(layer) for layer in node.layers]
+        if node.via_layer is not None:
+            parts.extend(["BY", self._connect_name(node.via_layer)])
         if node.link_name is not None:
             parts.extend(["LINK", self._quote(node.link_name)])
         if node.abut_also:
@@ -300,6 +322,8 @@ class SvrfPrinter:
             return f"{self._operand(node.left)} ? {self.emit(node.right.left)} : {self._operand(node.right.right)}"
         left = self._operand(node.left) if node.left else ''
         right = self._operand(node.right) if node.right else ''
+        if node.op == "STAMP":
+            return "STAMP " + left + (" BY " + right if node.right else "")
         return f"{left} {node.op} {right}"
 
     def _emit_UnaryOp(self, node):
@@ -348,9 +372,24 @@ class SvrfPrinter:
                 parts.append(self._operand(op))
         for c in node.constraints:
             parts.append(self.emit(c))
+        text = ' '.join(parts)
         for m in node.modifier_nodes:
-            parts.append(self._emit_modifier(m))
-        return ' '.join(parts)
+            if ((node.op == "DFM PROPERTY" or node.op.startswith("DFM PROPERTY "))
+                    and not isinstance(m, NamedModifier) and isinstance(m.value, ast.Expression)
+                    and not isinstance(m.value, ast.Constraint)):
+                v = m.value
+                if isinstance(v, ast.ConstrainedExpr):
+                    text += " [" + self.emit(v.expr) + "]"
+                    for c in v.constraints:
+                        text += " " + self.emit(c)
+                    for tail in v.modifier_nodes:
+                        text += " " + self._emit_modifier(tail)
+                else:
+                    text += " [" + self.emit(v) + "]"
+                continue
+            sep = '\n' if isinstance(m.value, (ast.IfDef, ast.OperationClause)) else ' '
+            text += sep + self._emit_modifier(m)
+        return text
 
     def _emit_modifier(self, m):
         """Render modifiers through the shared compatibility adapter."""
@@ -358,6 +397,8 @@ class SvrfPrinter:
         value = modifier.value
         if isinstance(value, ast.AstNode):
             rendered = self._operand(value) if isinstance(modifier, NamedModifier) else self.emit(value)
+        elif isinstance(value, QuotedScalar):
+            rendered = self._quote(value)
         else:
             rendered = str(value)
         return f"{modifier.name} {rendered}" if isinstance(modifier, NamedModifier) else rendered

@@ -8,6 +8,12 @@ from . import ast
 from .symbol_convention import SYMBOL_CONVENTION_REGISTRY
 
 
+class QuotedScalar(str):
+    """Keep original quoting on print without changing the serialized scalar."""
+
+    __slots__ = ()
+
+
 def modifier_value_context(name, fallback="generic"):
     name = str(name).upper()
     if name == "RDB":

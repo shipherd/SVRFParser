@@ -10,6 +10,7 @@ from .expression_parser import ExpressionParserMixin
 from .exceptions import LexerError, ParseError, SVRFParseError
 from .keywords import _DIRECTIVE_HEADS, _LAYER_BP
 from .lexer import Lexer
+from .modifiers import QuotedScalar
 from .operation_handlers import OperationParserMixin
 from .parser_cursor import ParserCursorMixin
 from .preprocessor_schema import CONDITIONAL_OPENERS, PREPROCESSOR_SCHEMA_REGISTRY, pragma_arguments
@@ -17,7 +18,8 @@ from .segmenter import SegmenterConfig, StatementSegmenter
 from .statement_handlers import StatementParserMixin
 from .svrf_constructs import count_svrf_constructs
 from .svrf_spec import PARSER_SPEC
-from .tokens import TokenType, rebase_tokens
+from .tokens import Token, TokenType, rebase_tokens
+from .tvf import tvf_prefix
 
 TT = TokenType
 
@@ -80,6 +82,7 @@ _SEGMENTER_CONFIG = SegmenterConfig(
     comparison_symbols=_COMPARISON_SYMBOLS,
     arithmetic_symbols=frozenset(_ARITHMETIC_BP),
     expression_operator_words=frozenset(_INFIX_BP) | _PREFIX_OPS | {"WITH"},
+    infix_words=frozenset(_INFIX_BP) - {"BY"},
     expression_prefix_words=_EXPRESSION_PREFIX_WORDS,
     modifier_starters=_MODIFIER_STARTERS,
     prefix_boolean_ops=_PREFIX_BOOLEAN_OPS,
@@ -101,16 +104,53 @@ class Parser(ParserCursorMixin, StatementParserMixin, OperationParserMixin, Expr
         self.warnings = []
         self._current_statement_cst = None
         self._expression_context = "scalar"
+        self._ternary_separator = None
         self._macro_arities = {}
         self._segmenter = StatementSegmenter(tokens, _SEGMENTER_CONFIG)
 
     def parse(self):
         start = self.pos
-        statements = self._parse_sequence(mode="top")
+        statements = [self._parse_tvf_script()] if self._at(TT.TVF_SCRIPT) else self._parse_sequence(mode="top")
         line = statements[0].line if statements else 1
         col = statements[0].col if statements else 1
         program = ast.Program(statements=statements, line=line, col=col)
         return self._finish_node(program, start)
+
+    def _parse_tvf_script(self):
+        from .source_map import SourceFile
+
+        script = self._advance()
+        text = script.raw
+        source = SourceFile(self.filename, text)
+        tokens = []
+        tail = None
+        end = len(text)
+        for kind, start, stop in tvf_prefix(text):
+            line, col = source.position(start)
+            if kind != "literal":
+                end = start
+                tail = Token(TT.INVALID, text[start], line, col, line, col + 1, start, start + 1)
+                break
+            try:
+                part = Lexer(text[start:stop], self.filename, _svrf_only=True).tokens()
+            except LexerError as exc:
+                raise LexerError(exc.message, line + exc.line - 1, exc.col + (col - 1 if exc.line == 1 else 0)) from exc
+            rebase_tokens(part, line, col, start)
+            part[-1].type = TT.NEWLINE
+            part[-1].value = "\n"
+            tokens.extend(part)
+        status = "literal" if tail is None else ("partial" if tokens else "opaque")
+        line, col = source.position(end)
+        tokens.append(Token(TT.EOF, "", line, col, offset=end, end_offset=end))
+        inner = type(self)(tokens, self.filename, text, self.strict)
+        body = inner.parse().statements
+        self.warnings.extend(inner.warnings)
+        if tail is not None:
+            if kind == "unterminated":
+                self._warn("parser.tvf.unterminated_verbatim", "Unterminated braced tvf::VERBATIM argument", token=tail)
+            else:
+                self._warn("parser.tvf.opaque_tcl", "Remaining TVF commands require Tcl evaluation", token=tail)
+        return ast.TvfScript(content=text, body=body, parse_status=status, **self._loc(script))
 
     def _starts_line_statement_at(self, idx):
         return self._segmenter.starts_line_statement_at(idx)
@@ -220,6 +260,10 @@ class Parser(ParserCursorMixin, StatementParserMixin, OperationParserMixin, Expr
             except ParseError as exc:
                 if self.strict:
                     raise
+                if exc.recovery_end is not None:
+                    statement_cst = self._segmenter.recovery_span(
+                        statement_cst, exc.recovery_end, stop_symbols, stop_preprocessors,
+                    )
                 skipped = self._recover_after_error(
                     statement_cst,
                     stop_symbols,
@@ -241,6 +285,9 @@ class Parser(ParserCursorMixin, StatementParserMixin, OperationParserMixin, Expr
             finally:
                 self._current_statement_cst = prev_statement_cst
             if stmt is not None:
+                operation = stmt.expression if isinstance(stmt, ast.LayerAssignment) else stmt
+                if isinstance(operation, ast.DRCOp) and operation.op == "NET AREA RATIO":
+                    self._attach_ratio_tail(operation)
                 statements.append(self._finish_node(stmt, start))
                 pending_dfm_spec = self._dfm_spec_continuation_after(stmt, pending_dfm_spec)
                 if mode in {"macro", "property"}:
@@ -517,7 +564,10 @@ class Parser(ParserCursorMixin, StatementParserMixin, OperationParserMixin, Expr
                 break
             if self._at_directive_boundary():
                 break
-            arguments.append(self._parse_scalar_argument())
+            if self._at_symbol("["):
+                arguments.append(self._parse_bracketed_scalar_sequence(canonical=True))
+            else:
+                arguments.append(self._parse_scalar_argument())
         return arguments
 
     def _consume_directive_continuation_newline(self):
@@ -972,7 +1022,7 @@ class Parser(ParserCursorMixin, StatementParserMixin, OperationParserMixin, Expr
     def _parse_property_block_body(self):
         return self._parse_sequence(
             mode="property",
-            stop_symbols={"]"},
+            stop_symbols={"]", "}"},
             stop_preprocessors={"#ELSE", "#ENDIF"},
         )
 
@@ -987,6 +1037,7 @@ class Parser(ParserCursorMixin, StatementParserMixin, OperationParserMixin, Expr
         if self._at(TT.PREPROCESSOR) and self._cur().value in {"#ELSE", "#ENDIF"}:
             return block
         if self._at(TT.EOF) or self._at(TT.SYMBOL, "}"):
+            self._warn("parser.property.unterminated", "Expected ']' to close property block", token=self._cur())
             return block
         self._expect(TT.SYMBOL, "]", "Expected ']' to close property block")
         return block
@@ -1053,6 +1104,9 @@ class Parser(ParserCursorMixin, StatementParserMixin, OperationParserMixin, Expr
             save = self.pos
             self._skip_newlines()
             separator = None
+            if self.pos == self._ternary_separator:
+                self.pos = save
+                break
             if self._at(TT.SYMBOL, ":") or self._at(TT.SYMBOL, "::"):
                 separator = self._advance().value
             if separator is None:
@@ -1080,7 +1134,7 @@ class Parser(ParserCursorMixin, StatementParserMixin, OperationParserMixin, Expr
     def _parse_scalar_argument(self):
         token = self._cur()
         if token.type == TT.STRING:
-            return self._advance().value
+            return QuotedScalar(self._advance().value)
         if token.type == TT.NUMBER:
             return self._advance().value
         if token.type == TT.IDENT:
@@ -1091,7 +1145,7 @@ class Parser(ParserCursorMixin, StatementParserMixin, OperationParserMixin, Expr
             return self._parse_expression(stop_tokens={")"}, stop_on_newline=False)
         return self._advance().raw
 
-    def _parse_bracketed_scalar_sequence(self):
+    def _parse_bracketed_scalar_sequence(self, *, canonical=False):
         self._expect(TT.SYMBOL, "[")
         parts = ["["]
         depth = 1
@@ -1101,7 +1155,14 @@ class Parser(ParserCursorMixin, StatementParserMixin, OperationParserMixin, Expr
                 depth += 1
             elif token.type == TT.SYMBOL and token.value == "]":
                 depth -= 1
-            parts.append("\n" if token.type == TT.NEWLINE else str(token.raw))
+            if canonical:
+                if token.type == TT.NEWLINE:
+                    continue
+                if not (parts[-1] in {"(", "["} and token.value in {")", "]"}):
+                    parts.append(" ")
+                parts.append(str(token.value if token.type in {TT.IDENT, TT.STRING} else token.raw))
+            else:
+                parts.append("\n" if token.type == TT.NEWLINE else str(token.raw))
             if depth == 0:
                 break
         return "".join(parts)

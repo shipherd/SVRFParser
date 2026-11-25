@@ -9,6 +9,7 @@ from .expression_schema import (
     PREFIX_EXPRESSION_SCHEMA_REGISTRY,
 )
 from .keywords import _DRC_MODIFIERS
+from .command_dictionary import OP_STARTS, match_tokens
 from .svrf_spec import PARSER_SPEC
 from .tokens import TokenType
 
@@ -127,6 +128,10 @@ class ExpressionParserMixin:
         )
 
     def _parse_parenthesized_nud(self, loc):
+        if self.pos + 6 < self.length and self.tokens[self.pos + 3].value == "(" and self.tokens[self.pos + 6].value == "(":
+            chain = self._try_nested_boolean_group()
+            if chain is not None:
+                return chain
         self._advance()
         expr = self._parse_expression(0, stop_tokens={")"}, stop_on_newline=False)
         if self._cur().type == TT.IDENT and self._cur().value in (_MODIFIER_STARTERS | _DRC_MODIFIERS):
@@ -156,6 +161,40 @@ class ExpressionParserMixin:
                     **loc,
                 )
         self._expect(TT.SYMBOL, ")")
+        return expr
+
+    def _try_nested_boolean_group(self):
+        # Generated decks use A OR (B OR (...)). Explicit parentheses fix
+        # the grouping, so these simple layers need no recursive Pratt calls.
+        tokens = self.tokens
+        reserved = self._segmenter.config.expression_prefix_words | {"STAMP", "CMACRO", "FMACRO"}
+        frames = []
+        i = self.pos
+        while i + 3 < self.length:
+            opening, layer, op, rhs = tokens[i:i+4]
+            if (opening.type != TT.SYMBOL or opening.value != "(" or layer.type != TT.IDENT
+                    or layer.value in reserved or op.type != TT.IDENT or op.value not in {"OR", "AND", "XOR"}):
+                return None
+            frames.append(i)
+            i += 3
+            if rhs.type == TT.SYMBOL and rhs.value == "(":
+                continue
+            if rhs.type != TT.IDENT or rhs.value in reserved:
+                return None
+            break
+        else:
+            return None
+        end = i + 1 + len(frames)
+        if end > self.length or any(t.type != TT.SYMBOL or t.value != ")" for t in tokens[i+1:end]):
+            return None
+        def ref(index):
+            return self._finish_node(ast.LayerRef(name=tokens[index].raw.upper()), index, index+1)
+
+        expr = ref(i)
+        for close, start in enumerate(reversed(frames), i+1):
+            expr = self._finish_node(ast.BinaryOp(op=tokens[start+2].value, left=ref(start+1), right=expr),
+                                     start, close+1)
+        self.pos = end
         return expr
 
     def _parse_bracket_nud(self, loc):
@@ -210,7 +249,7 @@ class ExpressionParserMixin:
         ):
             tags.add("callable_name")
         spaced_operand = self._current_token_is_spaced_operand_before_paren()
-        if spaced_operand:
+        if spaced_operand and token.value != "STAMP":
             tags.add("spaced_operand_before_paren")
         if (
             not spaced_operand
@@ -229,6 +268,11 @@ class ExpressionParserMixin:
         return PREFIX_EXPRESSION_SCHEMA_REGISTRY.match(self._collect_prefix_expression_tags(token))
 
     def _parse_ident_nud(self, token, loc, stop_tokens, stop_on_newline):
+        if self._expression_context not in {"modifier", "dfm"} and token.value in OP_STARTS:
+            hit = match_tokens(self.tokens, self.pos)
+            if (hit and hit[0].route == "operation" and not self._segmenter.starts_assignment_at(self.pos)
+                    and not (self._peek().type == TT.SYMBOL and self._peek().value in {":", "::"})):
+                return self._parse_generic_operation()
         if token.value in {"CMACRO", "FMACRO"} and self._peek().type in (TT.IDENT, TT.STRING):
             return self._parse_macro_invocation(inline=True)
         if token.value in {"INTERNAL", "EXTERNAL", "ENCLOSURE", "INTERACT"} and not self._can_start_expression_token(self._peek()):
@@ -295,6 +339,9 @@ class ExpressionParserMixin:
         if token.type != TT.IDENT:
             return frozenset(tags)
 
+        if (token.value == "NET" and self._expression_context not in {"modifier", "dfm"}
+                and self.tokens[self._next_non_newline_index(self.pos + 1)].value == "INTERACT"):
+            tags.add("net_interact")
         if self._is_text_selection_head():
             tags.add("text_selection")
         if token.value in {"INSIDE", "OUTSIDE", "OUT"} and self._peek().type == TT.IDENT and self._peek().value == "CELL":

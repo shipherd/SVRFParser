@@ -357,7 +357,7 @@ def _collect_statement_placeholders(statements, *, include_conditionals=True):
                 pending.extend(reversed(current.else_body))
                 pending.extend(reversed(current.then_body))
             continue
-        if isinstance(current, ast.EncryptedBlock):
+        if isinstance(current, (ast.EncryptedBlock, ast.TvfScript)):
             pending.extend(reversed(current.body))
             continue
         if isinstance(current, ast.IfExpr):
@@ -398,7 +398,7 @@ def _collect_local_scope_reference_candidates(statements):
             pending.extend(reversed(current.else_body))
             pending.extend(reversed(current.then_body))
             continue
-        if isinstance(current, ast.EncryptedBlock):
+        if isinstance(current, (ast.EncryptedBlock, ast.TvfScript)):
             pending.extend(reversed(current.body))
             continue
         if isinstance(current, ast.IfExpr):
@@ -608,7 +608,7 @@ def build_symbol_table(statements, filename="<input>", strict=False):
             if isinstance(stmt, ast.IfDef):
                 push_stream(stmt.else_body, stmt_filename, (*branch_path, (id(stmt), False)))
                 push_stream(stmt.then_body, stmt_filename, (*branch_path, (id(stmt), True)))
-            elif isinstance(stmt, ast.EncryptedBlock) and stmt.body:
+            elif isinstance(stmt, (ast.EncryptedBlock, ast.TvfScript)) and stmt.body:
                 push_stream(stmt.body, stmt_filename, branch_path)
 
     visit_statements(statements, filename)

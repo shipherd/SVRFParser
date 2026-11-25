@@ -194,20 +194,66 @@ class OperationExpressionParserMixin:
         operand = self._parse_expression(50, stop_tokens=stop_tokens, stop_on_newline=stop_on_newline)
         return ast.UnaryOp(op=token.value, operand=operand, **loc)
 
+    def _find_ternary_separator(self, compact_only):
+        # A tight colon may belong to a qualified name. Prefer a separate colon
+        # at the same nesting level; fall back to A?B:C when there is none.
+        depth = nested = separated = 0
+        fallback = None
+        saw_separated = False
+        for i in range(self.pos, self._ternary_separator if self._ternary_separator is not None else self.length):
+            t = self.tokens[i]
+            if t.type in {TT.EOF, TT.PREPROCESSOR, TT.RULE_COMMENT}:
+                break
+            if t.type != TT.SYMBOL:
+                continue
+            if t.value in {"(", "["}:
+                depth += 1
+            elif t.value in {")", "]"}:
+                if not depth:
+                    break
+                depth -= 1
+            elif not depth:
+                if t.value in {",", "}"}:
+                    break
+                if t.value == "?":
+                    nested += 1
+                    separated += 1
+                if t.value != ":":
+                    continue
+                if fallback is None:
+                    if nested:
+                        nested -= 1
+                    else:
+                        fallback = i
+                        if compact_only:
+                            return i, True
+                before, after = self.tokens[i-1], self.tokens[i+1]
+                if (before.type == TT.IDENT and after.type in {TT.IDENT, TT.NUMBER, TT.STRING}
+                        and before.end_offset == t.offset and t.end_offset == after.offset):
+                    continue
+                saw_separated = True
+                if not separated:
+                    return i, False
+                separated -= 1
+        return fallback, compact_only or not saw_separated
+
     def _parse_ternary_led(self, left, lbp, loc, stop_tokens, stop_on_newline):
         frames = []
         current_left = left
         current_loc = loc
+        compact_only = False
 
         while True:
             self._advance()
             self._skip_newlines()
-            then_expr = self._parse_expression(
-                0,
-                stop_tokens=stop_tokens | {":"},
-                stop_on_newline=stop_on_newline,
-            )
-            self._match(TT.SYMBOL, ":")
+            outer = self._ternary_separator
+            self._ternary_separator, compact_only = self._find_ternary_separator(compact_only)
+            try:
+                then_expr = self._parse_expression(0, stop_tokens=stop_tokens | {":"}, stop_on_newline=stop_on_newline)
+            finally:
+                self._ternary_separator = outer
+            self._skip_newlines()
+            self._expect(TT.SYMBOL, ":")
             self._skip_newlines()
             else_expr = self._parse_expression(
                 lbp,
@@ -246,6 +292,14 @@ class OperationExpressionParserMixin:
     def _parse_constraint_led_from_schema(self, left, lbp, loc, stop_tokens, stop_on_newline):
         del lbp, stop_tokens, stop_on_newline
         return self._parse_constraint_led(left, loc)
+
+    def _parse_net_interact_led(self, left, lbp, loc, stop_tokens, stop_on_newline):
+        self.pos = self._next_non_newline_index(self.pos + 1) + 1
+        self._consume_rhs_newlines()
+        operands = [left]
+        if self._can_start_expression_token() and not self._at_statement_boundary("rule", allow_same_line_statement=True):
+            operands.append(self._parse_expression(lbp, stop_tokens, stop_on_newline, context="layer"))
+        return ast.DRCOp(op="NET INTERACT", operands=operands, constraints=self._parse_constraints(), **loc)
 
     def _parse_with_led(self, left, loc, stop_tokens, stop_on_newline, *, negated=False):
         if self._is_text_selection_head():
@@ -379,7 +433,7 @@ class OperationExpressionParserMixin:
             self._advance()
         self._consume_rhs_newlines()
         right = self._parse_expression(30, stop_tokens=stop_tokens, stop_on_newline=stop_on_newline)
-        return ast.BinaryOp(op=" ".join(edge_op), left=left, right=right, **loc)
+        return self._finish_edge_binary(edge_op, left, right, loc)
 
     def _parse_not_compound_led(self, left, loc, stop_tokens, stop_on_newline):
         self._advance()
@@ -410,7 +464,7 @@ class OperationExpressionParserMixin:
                 op_parts.append("EDGE")
             self._consume_rhs_newlines()
             right = self._parse_expression(30, stop_tokens=stop_tokens, stop_on_newline=stop_on_newline)
-            return ast.BinaryOp(op=" ".join(op_parts), left=left, right=right, **loc)
+            return self._finish_edge_binary(op_parts, left, right, loc)
         if middle in {"INSIDE", "OUTSIDE", "OUT"} and self._cur().type == TT.IDENT and self._cur().value == "CELL":
             self._advance()
             return self._parse_cell_selection(f"NOT {middle} CELL", left, loc, stop_tokens, stop_on_newline)

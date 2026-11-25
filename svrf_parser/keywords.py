@@ -1,11 +1,14 @@
 """Centralized keyword tables derived from packaged spec artifacts."""
 
-from .svrf_spec import KEYWORD_SPEC
+from .svrf_spec import KEYWORD_SPEC, PARSER_SPEC
 
 
 _KEYWORD_REGISTRY = dict(KEYWORD_SPEC.keyword_registry)
 _KEYWORD_ALIASES = dict(KEYWORD_SPEC.keyword_aliases)
 _LAYER_BP = dict(KEYWORD_SPEC.layer_bp)
+_CONNECT_OPTIONS = frozenset({"BY", "LINK", "ABUT"})
+# A layer name emitted bare must not become an option or another statement.
+_CONNECT_RESERVED_NAMES = _CONNECT_OPTIONS.union(_KEYWORD_REGISTRY, _KEYWORD_ALIASES, *PARSER_SPEC.tables.values())
 
 
 _DIRECTIVE_HEADS = frozenset(

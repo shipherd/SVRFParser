@@ -42,9 +42,126 @@ _MIN_ARGUMENTS.update({"STEP": 1, "DISPLACE": 2, "STRIPE": 1, "SPACEXY": 3, "SPA
 
 
 class DfmSpecParserMixin:
+    def _via_words(self, *words):
+        self._skip_newlines()
+        start = self.pos
+        for word in words:
+            self._skip_newlines()
+            self._expect(TT.IDENT, word)
+        return start
+
+    def _via_clause(self, *words):
+        start = self._via_words(*words)
+        return self._finish_node(ast.DfmClause(keywords=list(words)), start)
+
+    def _via_error(self, message):
+        t = self._cur()
+        raise ParseError(message, t.line, t.col, t)
+
+    def _via_layer_list(self):
+        names = []
+        self._skip_newlines()
+        while not self._at_ident("END") and not self._at_symbol(";") and not self._at_symbol("]"):
+            t = self._cur()
+            if (t.type not in (TT.IDENT, TT.NUMBER, TT.STRING) or self._segmenter.starts_assignment_at(self.pos)
+                    or self._segmenter.starts_rule_check_at(self.pos, "top")):
+                self._via_error("Expected a connectivity layer")
+            name = self._parse_name()
+            names.append(name if t.type == TT.IDENT else None)
+            self._skip_newlines()
+        return names
+
+    def _via_semicolon(self, separated):
+        if (separated and self._at_symbol(";") and self.tokens[self.pos-1].type != TT.NEWLINE
+                and self.tokens[self.pos-1].end_offset == self._cur().offset):
+            self._via_error("Separate the connectivity semicolon from the last layer")
+        self._expect(TT.SYMBOL, ";")
+
+    def _parse_via_redundancy(self, start):
+        self._advance()
+        self._skip_newlines()
+        count = bool(self._match(TT.IDENT, "COUNT"))
+        self._skip_newlines()
+        name = self._expect(TT.STRING, message="Expected a quoted specification name").value if count else self._parse_name()
+        body = []
+        if count:
+            begin = self._next_non_newline_index()
+            target = self._via_clause("TARGET")
+            self._skip_newlines()
+            i = self.pos
+            self._parse_name()
+            target.arguments.append(self._operation_clause(i, self.pos))
+            body.append(self._finish_node(target, begin))
+        begin = self._next_non_newline_index()
+        connectivity = self._via_clause("CONNECTIVITY")
+        body.append(connectivity)
+        self._skip_newlines()
+        if count:
+            i = self.pos
+            if self._at_symbol("["):
+                markers = set()
+                while self._match(TT.SYMBOL, "["):
+                    names = self._via_layer_list()
+                    if (len(names) < 2 or "_TARGET_" in names or
+                            ("BY" in names and (names.count("BY") != 1 or names.index("BY") != len(names)-2
+                                               or names.index("BY") < 2))):
+                        self._via_error("Invalid bracketed connectivity definition")
+                    markers.update(names)
+                    self._expect(TT.SYMBOL, "]")
+                    self._skip_newlines()
+                if not {"_TARGET1_", "_TARGET2_"} <= markers:
+                    self._via_error("Expected both connectivity target markers")
+            else:
+                names = self._via_layer_list()
+                if (len(names) < 3 or len(names) % 2 != 1 or names.count("_TARGET_") != 1
+                        or names.index("_TARGET_") % 2 != 1 or {"BY", "_TARGET1_", "_TARGET2_"}.intersection(names)):
+                    self._via_error("Invalid target connectivity stack")
+            self._match(TT.SYMBOL, ";")
+            connectivity.arguments.append(self._operation_clause(i, self.pos))
+        else:
+            while not self._at_ident("END"):
+                i = self.pos
+                if len(self._via_layer_list()) < 2:
+                    self._via_error("A connectivity definition requires at least two layers")
+                self._via_semicolon(separated=True)
+                connectivity.arguments.append(self._operation_clause(i, self.pos))
+                self._skip_newlines()
+            if not connectivity.arguments:
+                self._via_error("Expected a connectivity definition")
+        self._finish_node(connectivity, begin)
+        body.append(self._via_clause("END", "CONNECTIVITY"))
+        j = self._next_non_newline_index()
+        if (not count and self.tokens[j].type == TT.IDENT and self.tokens[j].value == "TREAT"
+                and not self._segmenter.starts_assignment_at(j) and not self._segmenter.starts_rule_check_at(j, "top")):
+            treat = self._via_clause("TREAT", "AS", "REDUNDANT")
+            body.append(treat)
+            self._skip_newlines()
+            while not self._at_ident("END"):
+                i = self.pos
+                self._parse_name()
+                self._via_words("WITH")
+                self._skip_newlines()
+                if not (self._match(TT.IDENT, "AREA") or self._match(TT.IDENT, "ASPECT")):
+                    self._via_error("Expected AREA or ASPECT")
+                self._skip_newlines()
+                self._expect(TT.SYMBOL, ">")
+                self._skip_newlines()
+                self._parse_expression(35, context="scalar")
+                self._skip_newlines()
+                self._via_semicolon(separated=False)
+                treat.arguments.append(self._operation_clause(i, self.pos))
+                self._skip_newlines()
+            self._finish_node(treat, j)
+            body.append(self._via_clause("END"))
+        return ast.DfmSpec(kind="VIA", variant="REDUNDANCY COUNT" if count else "REDUNDANCY",
+                           name=name, body=body, **self._loc(start))
+
     def _parse_dfm_spec_via(self):
         start = self._cur()
-        self.pos += 3
+        self._via_words("DFM", "SPEC", "VIA")
+        self._skip_newlines()
+        if self._at_ident("REDUNDANCY"):
+            return self._parse_via_redundancy(start)
         name = self._parse_name()
         clauses = []
         for key in ("VIASHAPE", "ENC1", "ENC2"):
@@ -108,7 +225,8 @@ class DfmSpecParserMixin:
 
     def _parse_local_svrf(self):
         start = self._cur()
-        self.pos += 3
+        self._via_words("DFM", "SPEC", "SVRF")
+        self._skip_newlines()
         name = self._parse_name()
         self._skip_newlines()
         self._expect(TT.SYMBOL, "(")

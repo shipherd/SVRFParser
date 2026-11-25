@@ -70,7 +70,7 @@ class TestHolesDonutConsistency(unittest.TestCase):
 
     def test_extent(self):
         node = parse_expr("EXTENT DRAWN")
-        assert_node_type(node, DRCOp, op="EXTENT")
+        assert_node_type(node, DRCOp, op="EXTENT DRAWN")
 
     def test_stamp(self):
         node = parse_expr("STAMP M1 BY M2")

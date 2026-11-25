@@ -211,6 +211,16 @@ class Include(AstNode):
         self.preprocessor = preprocessor
 
 
+class TvfScript(AstNode):
+    __slots__ = ("content", "body", "parse_status")
+
+    def __init__(self, content="", body=None, parse_status="literal", **kw):
+        super().__init__(**kw)
+        self.content = content
+        self.body = [] if body is None else body
+        self.parse_status = parse_status
+
+
 class EncryptedBlock(AstNode):
     __slots__ = ("content", "body", "parse_status", "directive")
 
@@ -397,6 +407,33 @@ class Device(AstNode):
         self.swap_lists = swap_lists or []
         self.signature = signature
         self.template = template
+
+
+class DeviceAuxLayers(AstNode):
+    __slots__ = ("layers",)
+
+    def __init__(self, layers, **kw):
+        super().__init__(**kw)
+        self.layers = layers
+
+
+class PropertyDeclaration(AstNode):
+    __slots__ = ("keyword", "properties")
+
+    def __init__(self, keyword, properties, **kw):
+        super().__init__(**kw)
+        self.keyword = keyword
+        self.properties = properties
+
+
+class OperationClause(AstNode):
+    """An ordered syntax fragment, not a layer or an evaluated expression."""
+
+    __slots__ = ("text",)
+
+    def __init__(self, text, **kw):
+        super().__init__(**kw)
+        self.text = text
 
 
 class DMacro(AstNode):

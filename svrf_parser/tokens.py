@@ -11,6 +11,7 @@ class TokenType(Enum):
     PREPROCESSOR = auto()
     ENCRYPTED = auto()
     TVF_BODY = auto()
+    TVF_SCRIPT = auto()
     RULE_COMMENT = auto()
     INVALID = auto()
     NEWLINE = auto()

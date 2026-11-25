@@ -2,7 +2,12 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
+
 from . import ast
+from .command_dictionary import OP_STARTS, match_tokens
+from .modifiers import QuotedScalar
+from .exceptions import ParseError
 from .operation_expression_handlers import OperationExpressionParserMixin
 from .operation_modifier_handlers import OperationModifierParserMixin
 from .operation_normalizer import normalize_operation_parts
@@ -35,10 +40,12 @@ class OperationParserMixin(OperationExpressionParserMixin, OperationModifierPars
         start = self._expect(TT.IDENT)
         operands = []
         allow_parenthesized_newlines = self._prefix_boolean_allows_parenthesized_newlines()
-        self._consume_prefix_boolean_newline(start.col, allow_parenthesized_newlines)
+        head = self._segmenter.previous_non_newline_index(self.pos - 2)
+        assignment_col = self.tokens[head - 1].col if head > 0 and self.tokens[head].value == "=" else None
+        self._consume_prefix_boolean_newline(start.col, allow_parenthesized_newlines, assignment_col)
         while True:
             if self._cur().type == TT.NEWLINE:
-                if self._consume_prefix_boolean_newline(start.col, allow_parenthesized_newlines):
+                if self._consume_prefix_boolean_newline(start.col, allow_parenthesized_newlines, assignment_col):
                     continue
                 break
             if self._at_statement_boundary("rule", allow_same_line_statement=False):
@@ -58,9 +65,14 @@ class OperationParserMixin(OperationExpressionParserMixin, OperationModifierPars
             and self.tokens[prev_idx].value == "("
         )
 
-    def _consume_prefix_boolean_newline(self, start_col, allow_parenthesized_newlines):
+    def _consume_prefix_boolean_newline(self, start_col, allow_parenthesized_newlines, assignment_col=None):
         if self._cur().type != TT.NEWLINE:
             return False
+        if not allow_parenthesized_newlines and self._peek_after_newlines().value == "(":
+            if not self._segmenter.continues_copy_input(self.pos):
+                return False
+            if assignment_col is not None:
+                start_col = assignment_col
         if not self._segmenter.continues_indented_expression_across_newline(
             self.pos,
             start_col,
@@ -91,7 +103,17 @@ class OperationParserMixin(OperationExpressionParserMixin, OperationModifierPars
         left = self._parse_prefix_operand()
         self._consume_rhs_newlines()
         right = self._parse_prefix_operand()
-        return ast.BinaryOp(op=" ".join(op_parts), left=left, right=right, **self._loc(start))
+        return self._finish_edge_binary(op_parts, left, right, self._loc(start))
+
+    def _finish_edge_binary(self, words, left, right, loc):
+        i = self._next_non_newline_index(self.pos)
+        if "TOUCH" in words and words[-1] == "EDGE" and self.tokens[i].type == TT.IDENT and self.tokens[i].value == "ENDPOINT":
+            j = self._next_non_newline_index(i + 1)
+            if self.tokens[j].type == TT.IDENT and self.tokens[j].value in {"ONLY", "ALSO"}:
+                self.pos = j + 1
+                return ast.DRCOp(op=" ".join(words), operands=[left, right],
+                                 modifiers=["ENDPOINT", self.tokens[j].value], **loc)
+        return ast.BinaryOp(op=" ".join(words), left=left, right=right, **loc)
 
     def _parse_measurement_operation(self):
         start = self._expect(TT.IDENT)
@@ -140,9 +162,32 @@ class OperationParserMixin(OperationExpressionParserMixin, OperationModifierPars
             "pathchk": self._parse_pathchk_operation,
             "fixed_geometry": self._parse_fixed_geometry,
             "directional_geometry": self._parse_directional_geometry,
+            "expand_text": self._parse_expand_text,
         }
         handler = strategy_handlers.get(schema.parse_strategy, self._parse_default_operation)
         return handler(start, op_name, schema, modifier_starters)
+
+    def _parse_expand_text(self, start, op_name, schema, modifier_starters):
+        self._skip_newlines()
+        t = self._cur()
+        if self._at_ident("BY") or not (self._can_start_expression_token() or self._at_symbol("?")):
+            raise ParseError("EXPAND TEXT requires a text name or pattern", t.line, t.col, t)
+        operands = [self._parse_text_filter(set(), True)]
+        self._skip_newlines()
+        if not self._at_ident("BY"):
+            operands.append(self._parse_expression(50, context="layer"))
+            self._skip_newlines()
+        self._expect(TT.IDENT, "BY")
+        self._skip_newlines()
+        modifiers = [("BY", self._parse_expression(35, context="scalar"))]
+        for first, second in (("PRIMARY", "ONLY"), ("CASE", "SENSITIVE")):
+            i = self._next_non_newline_index()
+            if self.tokens[i].type == TT.IDENT and self.tokens[i].value == first and not self._segmenter.starts_line_statement_at(i):
+                self.pos = i + 1
+                self._skip_newlines()
+                self._expect(TT.IDENT, second)
+                modifiers.append(first + " " + second)
+        return ast.DRCOp(op=op_name, operands=operands, modifiers=modifiers, **self._loc(start))
 
     def _parse_directional_geometry(self, start, op_name, schema=None, modifier_starters=None, *, left=None):
         operands = [left] if left is not None else []
@@ -153,16 +198,24 @@ class OperationParserMixin(OperationExpressionParserMixin, OperationModifierPars
         while True:
             i = self._next_non_newline_index(self.pos)
             t = self.tokens[i]
+            if i != self.pos and self._starts_line_statement_at(i):
+                break
             j = self._next_non_newline_index(i+1) if t.type == TT.IDENT else i
             if t.type == TT.IDENT and t.value in directions and self.tokens[j].value == "BY":
                 modifiers.append(directions[t.value])
                 self.pos = i = j
                 t = self.tokens[i]
             if t.type == TT.IDENT and t.value == "BY":
-                self.pos = i+1
-                self._skip_newlines()
-                factor = expand and self._match(TT.IDENT, "FACTOR")
-                self._skip_newlines()
+                value = self._next_non_newline_index(i + 1)
+                factor = expand and self.tokens[value].type == TT.IDENT and self.tokens[value].value == "FACTOR"
+                if factor:
+                    i = value
+                    value = self._next_non_newline_index(i + 1)
+                if (not self._can_start_expression_token(self.tokens[value])
+                        or (value > i + 1 and self._starts_line_statement_at(value))):
+                    missing = self.tokens[i]
+                    raise ParseError("Expected a distance", missing.line, missing.col, missing, recovery_end=i + 1)
+                self.pos = value
                 # Scalar context distinguishes 'distance (layer)' from a function call.
                 modifiers.append(("BY FACTOR" if factor else "BY", self._parse_expression(35, context="scalar")))
             elif expand and t.type == TT.IDENT and t.value == "CORNER" and self.tokens[j].value == "FILL":
@@ -229,11 +282,20 @@ class OperationParserMixin(OperationExpressionParserMixin, OperationModifierPars
 
     def _parse_pathchk_operation(self, start, op_name, schema, modifier_starters):
         del schema
+        options = {"PRINT", "PORTS", "NOFLOAT", "BREAK", "EXCLUDE", "POWERNAME", "GROUNDNAME", "LABELNAME", "BREAKNAME"}
+        modifier_starters = modifier_starters | options
         operands = []
         constraints = []
         modifiers = []
         if not self._at_statement_boundary("rule", allow_same_line_statement=bool(modifiers)):
             operands.append(self._parse_expression(0))
+        if (operands and self._can_start_expression_token()
+                and not (self._cur().type == TT.IDENT and self._cur().value in modifier_starters)
+                and not self._segmenter.starts_line_statement_at(self.pos)):
+            operands.append(self._parse_expression(50))
+        i = self._next_non_newline_index(self.pos)
+        if self.tokens[i].type == TT.IDENT and self.tokens[i].value in options:
+            self.pos = i
         self._consume_operation_continuation_newlines()
         if self._cur().type == TT.SYMBOL and self._cur().value in _COMPARISON_SYMBOLS:
             constraints.extend(self._parse_constraints())
@@ -264,6 +326,9 @@ class OperationParserMixin(OperationExpressionParserMixin, OperationModifierPars
                 break
             if self._starts_same_line_statement_at(self.pos, "rule"):
                 break
+            if token.type == TT.STRING:
+                modifiers.append(QuotedScalar(self._advance().value))
+                continue
             if token.type == TT.SYMBOL and token.value == "[":
                 modifiers.append(self._parse_bracketed_scalar_sequence())
                 continue
@@ -282,11 +347,16 @@ class OperationParserMixin(OperationExpressionParserMixin, OperationModifierPars
         operands = []
         constraints = []
         modifiers = []
+        if op_name == "NET AREA RATIO":
+            modifier_starters = modifier_starters | {"ACCUMULATE"}
 
         while True:
             token = self._cur()
             if token.type == TT.NEWLINE:
                 next_word = self.tokens[self._next_non_newline_index()].value
+                if op_name == "DFM COPY" and self._segmenter.continues_copy_input(self.pos):
+                    self._skip_newlines()
+                    continue
                 if (op_name.startswith("DFM DV ") and next_word in {"RDB", "DVPARAMS"}
                         or op_name == "DFM DV OVERRIDE" and not operands and next_word in {"CMACRO", "FMACRO"}):
                     self._skip_newlines()
@@ -315,7 +385,12 @@ class OperationParserMixin(OperationExpressionParserMixin, OperationModifierPars
                 modifiers.append(self._parse_expression(stop_on_newline=False, context="dfm"))
                 continue
             if token.type == TT.SYMBOL and token.value == "(" and schema.parenthesized_scalar_modifiers:
-                modifiers.append(self._parse_parenthesized_scalar_sequence())
+                index = self.pos
+                group = self._parse_parenthesized_scalar_sequence()
+                if op_name.startswith("DFM DP "):
+                    operands.append(self._operation_clause(index, self.pos))
+                else:
+                    modifiers.append(group)
                 continue
             if token.type == TT.IDENT and token.value in modifier_starters:
                 modifiers.extend(
@@ -353,8 +428,13 @@ class OperationParserMixin(OperationExpressionParserMixin, OperationModifierPars
         )
 
     def _resolve_operation_schema(self, start_idx):
-        return OPERATION_SCHEMA_REGISTRY.resolve(
+        schema = OPERATION_SCHEMA_REGISTRY.resolve(
             self.tokens,
             start_idx,
             self._segmenter.next_non_newline_index,
         )
+        if self.tokens[start_idx].value in OP_STARTS:
+            hit = match_tokens(self.tokens, start_idx)
+            if hit and hit[0].route == "operation" and hit[1] >= schema.end_idx:
+                schema = replace(schema, name=hit[0].name, words=tuple(hit[0].name.split()), end_idx=hit[1])
+        return schema

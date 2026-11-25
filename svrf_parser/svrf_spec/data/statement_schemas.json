@@ -2,6 +2,8 @@
   "entries": [
     {"name": "layer_resolution", "head_prefix": ["LAYER", "RESOLUTION"], "modes": ["top", "macro"], "parser_method": "_parse_fixed_specification"},
     {"name": "snap_offgrid", "head_prefix": ["SNAP", "OFFGRID"], "modes": ["top", "macro"], "parser_method": "_parse_fixed_specification"},
+    {"name": "dfm_spec_via", "head_prefix": ["DFM", "SPEC", "VIA"], "modes": ["top", "macro", "rule"], "parser_method": "_parse_dfm_spec_via"},
+    {"name": "dfm_spec_svrf", "head_prefix": ["DFM", "SPEC", "SVRF"], "modes": ["top", "macro", "rule"], "parser_method": "_parse_local_svrf"},
     {
       "head_prefix": [
         "DFM",
@@ -142,6 +144,7 @@
         "DVPARAMS"
       ],
       "modes": [
+        "macro",
         "rule",
         "top"
       ],

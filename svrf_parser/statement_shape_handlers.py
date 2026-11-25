@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from . import ast
 from .clause_cst import DelimitedGroupClause, OperandClause, ScalarClause
+from .cst_builder import build_statement_clause_cst
 from .exceptions import ParseError
 from .include_syntax import EMBEDDED_INCLUDE_HEADS
 from .normalizer import normalize_statement_clause_cst
@@ -66,7 +67,7 @@ class StatementShapeParserMixin(StatementBlockParserMixin):
         if self._at(TT.IDENT, "FMACRO") or not clause_cst.body_clauses:
             return False
         for clause in clause_cst.body_clauses:
-            if any(v in ("-", "+") for v in getattr(clause, "values", ())):
+            if any(v in ("-", "+", ":", "::") for v in getattr(clause, "values", ())):
                 return False
             if isinstance(clause, DelimitedGroupClause):
                 return False
@@ -170,48 +171,12 @@ class StatementShapeParserMixin(StatementBlockParserMixin):
         args = self._parse_statement_scalar_arguments(allow_same_line_statement=True)
         return ast.Directive(keywords=keywords, arguments=args, **self._loc(start))
 
-    def _parse_statement_shape_connect(self, shape):
-        soft = shape.name == "sconnect"
-        normalized = self._try_normalize_active_statement_clause_cst("sconnect" if soft else "connect")
-        if normalized is not None:
-            return normalized
-        start, keywords = self._consume_head_from_statement_cst(("SCONNECT",) if soft else ("CONNECT",))
-        if keywords is None:
-            start = self._advance()
-        layers = []
-        via_layer = None
-        link_name = None
-        abut_also = False
-
-        while not self._at_statement_limit("top", allow_same_line_statement=True):
-            if self._match(TT.IDENT, "BY"):
-                via_layer = self._parse_name()
-                continue
-            if self._match(TT.IDENT, "LINK"):
-                link_name = self._parse_name()
-                continue
-            if self._match(TT.IDENT, "ABUT"):
-                if self._match(TT.IDENT, "ALSO"):
-                    abut_also = True
-                else:
-                    self._warn(
-                        "parser.connect.expected_also",
-                        "Expected ALSO after ABUT",
-                    )
-                continue
-            if self._cur().type in (TT.IDENT, TT.STRING, TT.NUMBER):
-                layers.append(self._parse_name())
-                continue
-            break
-
-        return ast.Connect(
-            soft=soft,
-            layers=layers,
-            via_layer=via_layer,
-            link_name=link_name,
-            abut_also=abut_also,
-            **self._loc(start),
-        )
+    def _parse_statement_shape_connect(self, _shape):
+        statement = self._statement_cst_at_current() or self._segmenter.statement_cst(self.pos, "top")
+        clauses = build_statement_clause_cst(self.tokens, statement)
+        node = normalize_statement_clause_cst(clauses)
+        self.pos = clauses.end
+        return node
 
     def _parse_statement_shape_device(self, shape):
         del shape

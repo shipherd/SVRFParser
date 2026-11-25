@@ -112,6 +112,7 @@ LED_EXPRESSION_SCHEMAS = (
     LedExpressionSchema("equals_symbol", 95, frozenset({"equals_symbol"}), "_parse_symbol_binary_led", 4),
     LedExpressionSchema("arithmetic_symbol", 90, frozenset({"arithmetic_symbol"}), "_parse_symbol_binary_led", binding_power_source="arithmetic_symbol"),
     LedExpressionSchema("text_selection", 84, frozenset({"text_selection"}), "_parse_text_selection_led", 35),
+    LedExpressionSchema("net_interact", 83, frozenset({"net_interact"}), "_parse_net_interact_led", 30),
     LedExpressionSchema("cell_selection", 82, frozenset({"inside_outside_cell"}), "_parse_cell_selection_led", 30),
     LedExpressionSchema("with", 80, frozenset({"with"}), "_parse_with_led_from_schema", 35),
     LedExpressionSchema("measurement", 75, frozenset({"measurement"}), "_parse_measurement_led", 35),

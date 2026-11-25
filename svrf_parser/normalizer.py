@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from . import ast
+from .command_dictionary import match_words
 from .clause_cst import (
     DelimitedGroupClause,
     KeywordRunClause,
@@ -85,8 +86,13 @@ def _normalize_directive(clause_cst):
     arguments = []
     for clause in clause_cst.body_clauses:
         arguments.extend(_normalize_directive_clause_values(clause))
+    keywords = list(_header_words(clause_cst))
+    words = keywords + arguments
+    hit = match_words(words)
+    if hit and hit[0].route == "closed" and hit[1] > len(keywords):
+        keywords, arguments = words[:hit[1]], words[hit[1]:]
     return ast.Directive(
-        keywords=list(_header_words(clause_cst)),
+        keywords=keywords,
         arguments=arguments,
         property_block=None,
     )
@@ -106,22 +112,21 @@ def _normalize_connect(clause_cst):
     via_layer = None
     link_name = None
     abut_also = False
-    clauses = clause_cst.body_clauses
-    for i, clause in enumerate(clauses):
-        values = tuple(getattr(clause, "values", ()))
+    for clause in clause_cst.body_clauses:
         if isinstance(clause, OperandClause):
-            layers.extend(str(value) for value in values)
+            layers.extend(clause.values)
         elif isinstance(clause, ModifierClause):
-            if values in {("BY",), ("LINK",)}:
-                # Quoted values are separate scalar clauses in the concrete tree.
-                if i+1 < len(clauses) and isinstance(clauses[i+1], ScalarClause):
-                    values += clauses[i+1].values
-            if values[:1] == ("BY",) and len(values) > 1:
-                via_layer = str(values[1])
-            elif values[:1] == ("LINK",) and len(values) > 1:
-                link_name = str(values[1])
-            elif values[:2] == ("ABUT", "ALSO"):
+            key, value = clause.values
+            if key == "BY":
+                via_layer = value
+            elif key == "LINK":
+                link_name = value
+            elif (key, value) == ("ABUT", "ALSO"):
                 abut_also = True
+            else:
+                raise ValueError("Unknown connectivity option")
+        else:
+            raise ValueError("Unexpected connectivity clause")
     return ast.Connect(
         soft=soft,
         layers=layers,

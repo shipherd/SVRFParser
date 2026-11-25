@@ -22,6 +22,9 @@
     "DFM SPACE": {
       "min_operands": 1
     },
+    "DFM SELECT BY NET": {"min_operands": 2, "operand_roles": ["layer", "layer"], "variadic_operand_role": "literal"},
+    "NET AREA RATIO PRINT": {"min_operands": 2, "operand_roles": ["layer", "literal"]},
+    "EXPAND TEXT": {"min_operands": 1, "min_modifiers": 1, "operand_roles": ["literal", "layer"]},
     "DFM TEXT": {
       "min_operands": 1,
       "operand_roles": [
@@ -59,9 +62,10 @@
       "variadic_operand_role": "literal"
     },
     "NET INTERACT": {
-      "min_operands": 1,
+      "min_operands": 2,
       "min_constraints": 1,
       "operand_roles": [
+        "layer",
         "layer"
       ],
       "variadic_operand_role": "literal"
@@ -107,7 +111,7 @@
     },
     "PATHCHK": {
       "min_operands": 1,
-      "min_modifiers": 1
+      "operand_roles": ["literal", "layer"]
     },
     "WITH EDGE": {
       "requires_content": true
@@ -253,6 +257,16 @@
       "name": "EXPAND EDGE",
       "parenthesized_scalar_modifiers": false,
       "parse_strategy": "directional_geometry"
+    },
+    {
+      "name": "EXPAND TEXT",
+      "head_prefix": ["EXPAND", "TEXT"],
+      "family": "fixed",
+      "parse_strategy": "expand_text",
+      "modifier_family": "default",
+      "bracket_modifier_mode": "none",
+      "parenthesized_scalar_modifiers": false,
+      "allow_nonstatement_expression_newline": false
     },
     {
       "allow_nonstatement_expression_newline": false,

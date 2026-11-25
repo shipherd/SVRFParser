@@ -100,10 +100,11 @@ class TypedModifierTests(unittest.TestCase):
         reparsed = parse(printed, strict=True)
         self.assertTrue(program.structurally_equal(reparsed), printed)
 
-    def test_raw_expression_modifier_keeps_existing_rendering(self):
+    def test_property_expression_modifier_retains_required_brackets(self):
         expression = ast.BinaryOp(op="=", left=ast.LayerRef(name="P"), right=ast.NumberLiteral(value=1))
-        node = ast.DRCOp(op="DFM PROPERTY", modifiers=[expression])
-        self.assertEqual("DFM PROPERTY P = 1", SvrfPrinter().emit(node))
+        node = ast.DRCOp(op="DFM PROPERTY", operands=[ast.LayerRef(name="A")], modifiers=[expression])
+        self.assertEqual("DFM PROPERTY A [P = 1]", SvrfPrinter().emit(node))
+        self.assertTrue(node.structurally_equal(parse(SvrfPrinter().emit(node), strict=True).statements[0]))
 
 
 class SharedOperationContractTests(unittest.TestCase):

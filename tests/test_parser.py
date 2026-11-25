@@ -999,8 +999,12 @@ class TestManualExamples(unittest.TestCase):
         self.assertEqual(warnings, [])
         block = tree.statements[0]
         self.assertIsInstance(block, ast.PropertyBlock)
-        self.assertEqual(block.properties, ["L", "W", "MODE_A", "MODE_B"])
-        self.assertEqual(block.body[0].name, "NFIN")
+        self.assertEqual(block.properties, ["L", "W", "MODE_A"])
+        conditional, assignment = block.body
+        self.assertIsInstance(conditional, ast.IfDef)
+        self.assertEqual(conditional.then_body[0].keyword, ",")
+        self.assertEqual(conditional.then_body[0].properties, ["MODE_B"])
+        self.assertEqual(assignment.name, "NFIN")
 
     def test_top_level_ternary_expression_statement(self):
         text = "#IFDEF FLAG\n(COUNT(A) > 0) ? 1 : 0\n#ENDIF\n"
@@ -1325,7 +1329,7 @@ class TestManualExamples(unittest.TestCase):
         self.assertIsInstance(tree.statements[0], ast.LayerRef)
         self.assertEqual(tree.statements[0].name, "ALL_CPO_S1")
 
-    def test_drawn_skew_parses_as_modifier_in_strict_mode(self):
+    def test_drawn_skew_is_a_documented_operation(self):
         text = "RULE1 {\n  DRAWN SKEW\n}\n"
         tree, warnings = parse_with_diagnostics(text, strict=True)
         self.assertEqual(warnings, [])
@@ -1333,8 +1337,8 @@ class TestManualExamples(unittest.TestCase):
         self.assertIsInstance(rule, ast.RuleCheckBlock)
         self.assertEqual(len(rule.body), 1)
         self.assertIsInstance(rule.body[0], ast.DRCOp)
-        self.assertEqual(rule.body[0].op, "DRAWN")
-        self.assertEqual(rule.body[0].modifiers, ["SKEW"])
+        self.assertEqual(rule.body[0].op, "DRAWN SKEW")
+        self.assertEqual(rule.body[0].modifiers, [])
 
     def test_multiline_dfm_property_operand_list(self):
         text = (
